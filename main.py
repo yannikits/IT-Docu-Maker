@@ -31,8 +31,12 @@ import queue
 # Dependency check
 # ---------------------------------------------------------------------------
 REQUIRED = {"mss": "mss", "PIL": "Pillow", "pynput": "pynput"}
-missing = [pkg for mod, pkg in REQUIRED.items()
-           if not __import__("importlib").util.find_spec(mod)]
+missing = []
+for mod, pkg in REQUIRED.items():
+    try:
+        __import__(mod)
+    except ImportError:
+        missing.append(pkg)
 if missing:
     print(f"Installiere: {', '.join(missing)}")
     import subprocess
