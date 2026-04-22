@@ -1,0 +1,25 @@
+[ai]
+# KI-Funktionen aktivieren: true / false
+enabled = false
+
+# Provider wählen: openai | anthropic | azure_openai
+provider = openai
+
+# ── OpenAI / ChatGPT ────────────────────────────────────────────────
+# API-Key von https://platform.openai.com/api-keys
+openai_api_key =
+# Modell: gpt-4o (empfohlen), gpt-4-turbo, gpt-3.5-turbo
+openai_model = gpt-4o
+
+# ── Anthropic Claude ──────────────────────────────────────────────
+# API-Key von https://console.anthropic.com
+anthropic_api_key =
+# Modell: claude-sonnet-4-6, claude-opus-4-7, claude-haiku-4-5-20251001
+anthropic_model = claude-sonnet-4-6
+
+# ── Azure OpenAI ────────────────────────────────────────────────
+# Für Firmen die OpenAI über Microsoft Azure nutzen
+azure_api_key =
+azure_endpoint = https://IHRE-RESSOURCE.openai.azure.com/
+azure_deployment = gpt-4o
+azure_api_version = 2024-02-01
