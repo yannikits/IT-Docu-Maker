@@ -1,113 +1,157 @@
 """
-Brücke zwischen IT-Docu-Assistant (Aufzeichnung) und WBI-Docu-Assist (Dokumentgenerierung).
+Brücke: Aufzeichnung → Dokumentdaten
 
-Zwei Modi:
-  ohne KI  – recording_to_doc_data_no_ai()  → Aufzeichnung direkt als strukturiertes Markdown
-  mit KI   – build_ai_description()          → Text-Beschreibung für KI-Provider
-             inject_screenshots_into_markdown() → Screenshots als Anhang einbetten
+Event-Typen (Priorität):
+  Primär:
+    section  – Kapitelmarker        (description = Kapitelname)
+    step     – Manueller Schritt    (description = Notiztext, screenshot_b64 = optional)
+  Sekundär (Auto-Tracking, Fallback wenn keine Schritte vorhanden):
+    click, scroll  – automatisch aufgezeichnete Aktionen
+
+Dokumentstruktur (ohne KI):
+  ## 1. Abschnittsname
+    1. Schritt-Text
+       [Bild]
+    2. Schritt-Text
+       ...
+  ## 2. Nächster Abschnitt
+    ...
+
+Wenn keine section-Events vorhanden: alle Schritte in einem Abschnitt "Vorgehen".
+Wenn keine step-Events vorhanden: Auto-Tracking-Events als Schritte verwenden.
 """
 
 from datetime import datetime
-from typing import List
+from typing import List, Any
 
 
-def build_recording_markdown(events, include_screenshots: bool = True) -> str:
+# ---------------------------------------------------------------------------
+# Hilfsfunktionen
+# ---------------------------------------------------------------------------
+
+def _group_into_sections(events) -> list:
     """
-    Konvertiert ActionEvent-Liste direkt in Markdown ohne KI.
-    Notizen (F10) werden zu Kapitelüberschriften (## N. Name).
-    Screenshots werden als eingebettete Base64-Bilder eingefügt.
+    Gruppiert Events in Abschnitte.
+    Rückgabe: Liste von {"heading": str|None, "steps": [...], "auto": [...]}
     """
     sections = []
-    current = {"heading": None, "events": []}
+    current  = {"heading": None, "steps": [], "auto": []}
 
     for ev in events:
         if ev.action_type in ("start", "stop"):
             continue
-        if ev.action_type == "note":
-            if current["events"] or current["heading"]:
+        if ev.action_type == "section":
+            if current["steps"] or current["auto"] or current["heading"]:
                 sections.append(current)
-            current = {"heading": ev.note, "events": []}
-        else:
-            current["events"].append(ev)
+            current = {"heading": ev.description, "steps": [], "auto": []}
+        elif ev.action_type == "step":
+            current["steps"].append(ev)
+        elif ev.action_type in ("click", "scroll"):
+            current["auto"].append(ev)
+        # key-Events werden ignoriert
 
-    if current["events"] or current["heading"]:
+    if current["steps"] or current["auto"] or current["heading"]:
         sections.append(current)
 
+    return sections
+
+
+# ---------------------------------------------------------------------------
+# Markdown-Generierung (ohne KI)
+# ---------------------------------------------------------------------------
+
+def build_recording_markdown(events, include_screenshots: bool = True) -> str:
+    """
+    Konvertiert Aufzeichnung direkt in Markdown.
+
+    Logik:
+    • Manuelle Schritte (step) sind Primärinhalt.
+    • Wenn kein manueller Schritt in einem Abschnitt: Auto-Events als Fallback.
+    • Abschnitt-Marker (section) werden zu ## Überschriften.
+    • Kein Abschnitt-Marker → Standardabschnitt »Vorgehen«.
+    """
+    sections = _group_into_sections(events)
     if not sections:
         return ""
 
-    # Kein expliziter Abschnitt → alles unter einen Standard-Abschnitt
+    # Kein expliziter Abschnitt → Standardname
     if len(sections) == 1 and sections[0]["heading"] is None:
-        sections[0]["heading"] = "Aufgezeichnete Schritte"
+        sections[0]["heading"] = "Vorgehen"
 
-    lines = []
-    for idx, section in enumerate(sections, 1):
-        heading = section["heading"] or f"Abschnitt {idx}"
+    lines: List[str] = []
+
+    for idx, sec in enumerate(sections, 1):
+        heading = sec["heading"] or f"Abschnitt {idx}"
         lines.append(f"## {idx}. {heading}\n")
 
-        step_num = 0
-        for ev in section["events"]:
-            step_num += 1
-            ts = datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S")
-            label = {
-                "click":      "Klick",
-                "scroll":     "Scrollen",
-                "key":        "Tastatureingabe",
-                "screenshot": "Screenshot",
-            }.get(ev.action_type, ev.action_type.capitalize())
+        content_events = sec["steps"] if sec["steps"] else sec["auto"]
 
-            lines.append(f"{step_num}. **{label}** ({ts}): {ev.description}")
+        for snum, ev in enumerate(content_events, 1):
+            if ev.action_type == "step":
+                lines.append(f"{snum}. {ev.description}")
+            else:
+                # Auto-Tracking-Fallback
+                ts    = datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S")
+                label = {"click": "Klick", "scroll": "Scrollen"}.get(ev.action_type, "Aktion")
+                lines.append(f"{snum}. **{label}** ({ts}): {ev.description}")
 
             if include_screenshots and ev.screenshot_b64:
                 alt = ev.description[:60].replace('"', "'")
-                lines.append(f"\n![{alt}](data:image/jpeg;base64,{ev.screenshot_b64})\n")
+                lines.append(
+                    f"\n![{alt}](data:image/jpeg;base64,{ev.screenshot_b64})\n"
+                )
 
         lines.append("")
 
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Text-Beschreibung für KI-Provider
+# ---------------------------------------------------------------------------
+
 def build_ai_description(events, title: str) -> str:
     """
     Erstellt eine rein textuelle Beschreibung der Aufzeichnung für den KI-Provider.
-    Keine Base64-Bilder – nur strukturierter Text.
+    Keine Base64-Bilder (zu groß für API-Anfragen).
+    Die KI soll daraus einen professionellen Dokumentationstext erzeugen.
     """
     lines = [
         "Folgende Bildschirmaufzeichnung soll als professionelle IT-Dokumentation aufbereitet werden.",
         "",
-        f"Titel: {title}",
-        f"Aufgenommen am: {datetime.now().strftime('%d.%m.%Y')}",
+        f"Titel:         {title}",
+        f"Aufgenommen:   {datetime.now().strftime('%d.%m.%Y')}",
         "",
-        "Aufgezeichnete Aktionen (chronologisch):",
+        "Aufgezeichnete Schritte (in Reihenfolge):",
         "",
     ]
-    step = 0
-    for ev in events:
-        if ev.action_type in ("start", "stop"):
-            continue
-        step += 1
-        ts    = datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S")
-        label = {
-            "click":      "Mausklick",
-            "scroll":     "Scrollen",
-            "key":        "Tastatureingabe",
-            "screenshot": "Screenshot",
-            "note":       "Neuer Abschnitt",
-        }.get(ev.action_type, ev.action_type)
 
-        if ev.action_type == "note":
-            lines.append(f"\n=== ABSCHNITT: {ev.note} ===")
-        else:
-            ss_hint = " [Screenshot vorhanden]" if ev.screenshot_b64 else ""
-            lines.append(f"{step:3}. [{label}] ({ts}) {ev.description}{ss_hint}")
+    sections = _group_into_sections(events)
+
+    for sec in sections:
+        if sec["heading"]:
+            lines.append(f"\n=== ABSCHNITT: {sec["heading"]} ===")
+
+        for ev in sec["steps"]:
+            ss = " [Screenshot vorhanden]" if ev.screenshot_b64 else ""
+            lines.append(f"  SCHRITT: {ev.description}{ss}")
+
+        for ev in sec["auto"]:
+            ts    = datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S")
+            label = {"click": "Klick", "scroll": "Scroll"}.get(ev.action_type, "Aktion")
+            lines.append(f"  ({label} {ts}) {ev.description}")
 
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Screenshots in KI-Markdown einbetten
+# ---------------------------------------------------------------------------
+
 def inject_screenshots_into_markdown(ai_markdown: str, events) -> str:
     """
-    Hängt alle Screenshots aus der Aufzeichnung als Anhang an das KI-generierte Markdown.
-    Screenshots werden in der Reihenfolge ihres Auftretens eingebettet.
+    Hängt alle Screenshots als Anhang ans KI-generierte Markdown an.
+    (Die KI erhält keine Bilder – sie werden nachträglich eingebettet.)
     """
     screenshots = [
         (ev, i + 1)
@@ -122,26 +166,31 @@ def inject_screenshots_into_markdown(ai_markdown: str, events) -> str:
         ts   = datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S")
         desc = ev.description[:80].replace('"', "'")
         lines.append(f"### Screenshot {idx} – {ts}: {ev.description[:60]}")
-        lines.append(f"\n![{desc}](data:image/jpeg;base64,{ev.screenshot_b64})\n")
-
+        lines.append(
+            f"\n![{desc}](data:image/jpeg;base64,{ev.screenshot_b64})\n"
+        )
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Daten-Dict für Generator-Funktionen
+# ---------------------------------------------------------------------------
+
 def events_to_doc_data(
     events, title: str, template_id: str, fmt: str,
-    markdown_content: str = ""
+    markdown_content: str = "",
 ) -> dict:
-    """Erstellt das data-Dict für die Generator-Funktionen (generate_word / generate_excel / generate_pptx)."""
+    """Erstellt das data-Dict für generate_word / generate_excel / generate_pptx."""
     parts = title.split(" - ", 1) if " - " in title else [title, ""]
     return {
-        "titleSubject":   parts[0].strip(),
-        "titleTopic":     parts[1].strip() if len(parts) > 1 else "",
-        "template":       template_id,
-        "format":         fmt,
+        "titleSubject":    parts[0].strip(),
+        "titleTopic":      parts[1].strip() if len(parts) > 1 else "",
+        "template":        template_id,
+        "format":          fmt,
         "markdownContent": markdown_content,
-        "chapters":       [],
-        "refs":           [],
-        "aushang":        False,
+        "chapters":        [],
+        "refs":            [],
+        "aushang":         False,
     }
 
 
