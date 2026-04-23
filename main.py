@@ -53,12 +53,12 @@ from recorder.snipping import SnippingTool
 VORLAGEN_DIR = os.path.join(os.path.dirname(__file__), "vorlagen")
 
 TEMPLATE_FILES = {
-    "intern":        ("Internes_Dokument_Vorlage.docx",    "Internes Dokument (Word)",      "word"),
-    "extern":        ("Externes_Dokument_Vorlage.docx",    "Externes Dokument (Word)",      "word"),
-    "kunde":         ("Kundenanleitung_Vorlage.docx",      "Kundenanleitung (Word)",        "word"),
-    "netzwerk":      ("Netzwerkdoku_Vorlage.xlsx",         "Netzwerkdokumentation (Excel)", "excel"),
-    "intern_xl":     ("Internes_Dokument_Vorlage.xlsx",    "Internes Dokument (Excel)",     "excel"),
-    "extern_xl":     ("Externes_Dokument_Vorlage.xlsx",    "Externes Dokument (Excel)",     "excel"),
+    "intern":        ("Internes_Dokument_Vorlage.docx",      "Internes Dokument (Word)",      "word"),
+    "extern":        ("Externes_Dokument_Vorlage.docx",      "Externes Dokument (Word)",      "word"),
+    "kunde":         ("Kundenanleitung_Vorlage.docx",        "Kundenanleitung (Word)",        "word"),
+    "netzwerk":      ("Netzwerkdoku_Vorlage.xlsx",           "Netzwerkdokumentation (Excel)", "excel"),
+    "intern_xl":     ("Internes_Dokument_Vorlage.xlsx",      "Internes Dokument (Excel)",     "excel"),
+    "extern_xl":     ("Externes_Dokument_Vorlage.xlsx",      "Externes Dokument (Excel)",     "excel"),
     "praesentation": ("Präsentationsvorlage_Vorlage.pptx", "Präsentation (PPTX)",          "ppt"),
 }
 
@@ -89,21 +89,24 @@ class ITDocuMakerApp:
         self.root.resizable(True, True)
         self.root.minsize(480, 600)
 
-        self.events: list     = []
-        self.recording: bool  = False
-        self._snipping_active = False
+        self.events: list         = []
+        self.recording: bool      = False
+        self._snipping_active     = False
 
-        self.capture  = ScreenCapture()
-        self.tracker  = EventTracker(self._on_tracked_event)
-        self.snipping = SnippingTool()
+        self._progress_timer      = None
+        self._progress_value      = 0.0
+
+        self.capture   = ScreenCapture()
+        self.tracker   = EventTracker(self._on_tracked_event)
+        self.snipping  = SnippingTool()
         self.event_queue: queue.Queue = queue.Queue()
 
-        self.doc_title          = tk.StringVar(value=f"IT-Dokumentation {datetime.now().strftime('%Y-%m-%d')}")
+        self.doc_title          = tk.StringVar(
+            value=f"IT-Dokumentation {datetime.now().strftime('%Y-%m-%d')}"
+        )
         self.capture_on_click   = tk.BooleanVar(value=True)
         self.capture_on_scroll  = tk.BooleanVar(value=False)
         self.screenshot_quality = tk.IntVar(value=85)
-        self._progress_timer    = None
-        self._progress_value    = 0.0
 
         self._build_ui()
         self._setup_hotkeys()
@@ -115,30 +118,44 @@ class ITDocuMakerApp:
 
     def _build_ui(self):
         self.root.configure(bg="#f3f2f1")
+        PAD = {"padx": 12, "pady": 4}
 
+        # ── Titelleiste ──────────────────────────────────────────────────────
         hdr = tk.Frame(self.root, bg="#0078d4", pady=10)
         hdr.pack(fill=tk.X)
-        tk.Label(hdr, text="IT-Docu-Maker", bg="#0078d4", fg="white",
+        tk.Label(hdr, text="IT-Docu-Maker",
+                 bg="#0078d4", fg="white",
                  font=("Segoe UI", 13, "bold")).pack(side=tk.LEFT, padx=14)
         tk.Label(hdr, text="Aufzeichnung  →  Fertiges Dokument",
-                 bg="#0078d4", fg="#c7e0f4", font=("Segoe UI", 10)).pack(side=tk.LEFT)
+                 bg="#0078d4", fg="#c7e0f4",
+                 font=("Segoe UI", 10)).pack(side=tk.LEFT)
 
+        # ── Statuszeile ──────────────────────────────────────────────────────
         self.status_var = tk.StringVar(
-            value="Bereit – Aufnahme starten, Schritte dokumentieren, dann exportieren.")
-        self.status_label = tk.Label(self.root, textvariable=self.status_var,
-                                     bg="#f3f2f1", font=("Segoe UI", 10), anchor="w")
+            value="Bereit – Aufnahme starten, Schritte dokumentieren, dann exportieren."
+        )
+        self.status_label = tk.Label(
+            self.root, textvariable=self.status_var,
+            bg="#f3f2f1", font=("Segoe UI", 10), anchor="w"
+        )
         self.status_label.pack(fill=tk.X, padx=12, pady=(6, 2))
 
+        # ── Aufnahme-Steuerung ───────────────────────────────────────────────
         self.rec_btn = tk.Button(
-            self.root, text="▶  Aufnahme starten (F8)",
+            self.root,
+            text="▶  Aufnahme starten (F8)",
             command=self.toggle_recording,
-            bg="#107c10", fg="white", font=("Segoe UI", 11, "bold"),
-            relief=tk.FLAT, padx=10, pady=8, cursor="hand2")
+            bg="#107c10", fg="white",
+            font=("Segoe UI", 11, "bold"),
+            relief=tk.FLAT, padx=10, pady=8, cursor="hand2",
+        )
         self.rec_btn.pack(fill=tk.X, padx=12, pady=(4, 2))
 
         self.counter_var = tk.StringVar(value="Schritte: 0  |  Abschnitte: 0  |  Screenshots: 0")
-        tk.Label(self.root, textvariable=self.counter_var,
-                 bg="#f3f2f1", fg="#605e5c", font=("Segoe UI", 9)).pack(anchor="w", padx=12)
+        tk.Label(
+            self.root, textvariable=self.counter_var,
+            bg="#f3f2f1", fg="#605e5c", font=("Segoe UI", 9)
+        ).pack(anchor="w", padx=12)
 
         # ── Schritt erfassen ─────────────────────────────────────────────────
         step_lf = ttk.LabelFrame(self.root, text="Schritt erfassen", padding=(10, 6))
@@ -149,53 +166,81 @@ class ITDocuMakerApp:
         tk.Label(sec_row, text="Abschnitt / Kapitel:",
                  font=("Segoe UI", 9)).pack(side=tk.LEFT)
         self.section_var = tk.StringVar()
-        self.section_entry = tk.Entry(sec_row, textvariable=self.section_var,
-                                      font=("Segoe UI", 9), width=22, state=tk.DISABLED)
+        self.section_entry = tk.Entry(
+            sec_row, textvariable=self.section_var,
+            font=("Segoe UI", 9), width=22,
+            state=tk.DISABLED,
+        )
         self.section_entry.pack(side=tk.LEFT, padx=(6, 4), fill=tk.X, expand=True)
         self.section_entry.bind("<Return>", lambda _e: self.add_section())
+
         self.new_section_btn = tk.Button(
-            sec_row, text="+ Neuer Abschnitt", command=self.add_section,
-            state=tk.DISABLED, bg="#ca5010", fg="white",
-            font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=8, pady=3, cursor="hand2")
+            sec_row, text="+ Neuer Abschnitt",
+            command=self.add_section,
+            state=tk.DISABLED,
+            bg="#ca5010", fg="white",
+            font=("Segoe UI", 9, "bold"),
+            relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
+        )
         self.new_section_btn.pack(side=tk.LEFT)
 
         tk.Label(step_lf, text="Notiz / Beschreibung des Schritts:",
-                 font=("Segoe UI", 9), anchor="w").pack(fill=tk.X, pady=(0, 1))
-        tk.Label(step_lf,
-                 text="F9: Text + Screenshot speichern  |  F10 / Strg+Enter: Nur Text speichern",
-                 font=("Segoe UI", 8), fg="#605e5c", anchor="w").pack(fill=tk.X, pady=(0, 3))
+                 font=("Segoe UI", 9), anchor="w").pack(fill=tk.X, pady=(0, 3))
 
         text_outer = tk.Frame(step_lf, bg="#c8c6c4", bd=1, relief=tk.SOLID)
         text_outer.pack(fill=tk.X)
         self.note_text = tk.Text(
-            text_outer, font=("Segoe UI", 10), height=4,
-            relief=tk.FLAT, bg="#fafafa", fg="#323130",
-            insertbackground="#0078d4", wrap=tk.WORD,
-            padx=7, pady=5, state=tk.DISABLED)
+            text_outer,
+            font=("Segoe UI", 10),
+            height=4,
+            relief=tk.FLAT,
+            bg="#fafafa",
+            fg="#323130",
+            insertbackground="#0078d4",
+            wrap=tk.WORD,
+            padx=7, pady=5,
+            state=tk.DISABLED,
+        )
         note_scroll = tk.Scrollbar(text_outer, command=self.note_text.yview)
         self.note_text.configure(yscrollcommand=note_scroll.set)
         self.note_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         note_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
         self.note_text.bind("<Control-Return>", lambda _e: self.save_step_text_only())
 
         btn_row = tk.Frame(step_lf)
         btn_row.pack(fill=tk.X, pady=(6, 0))
+
         self.screenshot_btn = tk.Button(
-            btn_row, text="📷  Bereich-Screenshot (F9)",
-            command=self.take_area_screenshot, state=tk.DISABLED,
-            bg="#004578", fg="white", font=("Segoe UI", 9, "bold"),
-            relief=tk.FLAT, padx=10, pady=5, cursor="hand2")
+            btn_row,
+            text="\U0001f4f7  Bereich-Screenshot (F9)",
+            command=self.take_area_screenshot,
+            state=tk.DISABLED,
+            bg="#004578", fg="white",
+            font=("Segoe UI", 9, "bold"),
+            relief=tk.FLAT, padx=10, pady=5, cursor="hand2",
+        )
         self.screenshot_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+
         self.save_btn = tk.Button(
-            btn_row, text="✎  Text speichern (F10)",
-            command=self.save_step_text_only, state=tk.DISABLED,
-            bg="#8764b8", fg="white", font=("Segoe UI", 9),
-            relief=tk.FLAT, padx=10, pady=5, cursor="hand2")
+            btn_row,
+            text="✎  Text speichern (F10)",
+            command=self.save_step_text_only,
+            state=tk.DISABLED,
+            bg="#8764b8", fg="white",
+            font=("Segoe UI", 9),
+            relief=tk.FLAT, padx=10, pady=5, cursor="hand2",
+        )
         self.save_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         self.preview_canvas = tk.Canvas(
-            step_lf, width=456, height=150, bg="#edebe9",
-            highlightthickness=1, highlightbackground="#c8c6c4", cursor="hand2")
+            step_lf,
+            width=456, height=150,
+            bg="#edebe9",
+            highlightthickness=1,
+            highlightbackground="#c8c6c4",
+            cursor="hand2",
+        )
         self.preview_canvas.pack(pady=(8, 0), fill=tk.X)
         self._preview_placeholder()
         self.preview_canvas.bind("<Button-1>", self._on_preview_click)
@@ -204,15 +249,17 @@ class ITDocuMakerApp:
         # ── Einstellungen ────────────────────────────────────────────────────
         cfg_lf = ttk.LabelFrame(self.root, text="Einstellungen", padding=(10, 4))
         cfg_lf.pack(fill=tk.X, padx=12, pady=4)
+
         row1 = tk.Frame(cfg_lf)
         row1.pack(fill=tk.X)
         tk.Label(row1, text="Titel:", font=("Segoe UI", 9)).pack(side=tk.LEFT)
         tk.Entry(row1, textvariable=self.doc_title, font=("Segoe UI", 9),
                  width=40).pack(side=tk.LEFT, padx=(6, 0), fill=tk.X, expand=True)
+
         row2 = tk.Frame(cfg_lf)
         row2.pack(fill=tk.X, pady=(4, 0))
         tk.Label(row2, text="Auto-SS bei:", font=("Segoe UI", 9)).pack(side=tk.LEFT)
-        tk.Checkbutton(row2, text="Klick",    variable=self.capture_on_click,
+        tk.Checkbutton(row2, text="Klick",   variable=self.capture_on_click,
                        font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(6, 0))
         tk.Checkbutton(row2, text="Scrollen", variable=self.capture_on_scroll,
                        font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(4, 0))
@@ -223,10 +270,13 @@ class ITDocuMakerApp:
                              font=("Segoe UI", 9), width=4)
         self.qlbl.pack(side=tk.LEFT)
         self.screenshot_quality.trace_add(
-            "write", lambda *_: self.qlbl.config(text=f"{self.screenshot_quality.get()}%"))
+            "write",
+            lambda *_: self.qlbl.config(text=f"{self.screenshot_quality.get()}%")
+        )
 
         # ── Export ───────────────────────────────────────────────────────────
         ttk.Separator(self.root, orient="horizontal").pack(fill=tk.X, padx=12, pady=6)
+
         exp_lf = ttk.LabelFrame(self.root, text="Dokument exportieren", padding=(10, 6))
         exp_lf.pack(fill=tk.X, padx=12, pady=4)
 
@@ -234,52 +284,63 @@ class ITDocuMakerApp:
         vrow.pack(fill=tk.X, pady=(0, 6))
         tk.Label(vrow, text="Vorlage:", font=("Segoe UI", 9)).pack(side=tk.LEFT)
         self.template_combo = ttk.Combobox(
-            vrow, values=[v[1] for v in TEMPLATE_FILES.values()],
-            state="readonly", width=38, font=("Segoe UI", 9))
+            vrow,
+            values=[v[1] for v in TEMPLATE_FILES.values()],
+            state="readonly", width=38, font=("Segoe UI", 9),
+        )
         self.template_combo.current(0)
         self.template_combo.pack(side=tk.LEFT, padx=(6, 0))
 
         exp_btns = tk.Frame(exp_lf)
         exp_btns.pack(fill=tk.X)
         self.export_btn = tk.Button(
-            exp_btns, text="💾  Exportieren (ohne KI)",
-            command=self.export_document, state=tk.DISABLED,
-            bg="#0078d4", fg="white", font=("Segoe UI", 10, "bold"),
-            relief=tk.FLAT, padx=12, pady=8, cursor="hand2")
+            exp_btns, text="\U0001f4be  Exportieren (ohne KI)",
+            command=self.export_document,
+            state=tk.DISABLED,
+            bg="#0078d4", fg="white",
+            font=("Segoe UI", 10, "bold"),
+            relief=tk.FLAT, padx=12, pady=8, cursor="hand2",
+        )
         self.export_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+
         self.ai_export_btn = tk.Button(
-            exp_btns, text="🤖  Exportieren (mit KI)",
-            command=self.export_with_ai, state=tk.DISABLED,
-            bg="#5c2d91", fg="white", font=("Segoe UI", 10, "bold"),
-            relief=tk.FLAT, padx=12, pady=8, cursor="hand2")
+            exp_btns, text="\U0001f916  Exportieren (mit KI)",
+            command=self.export_with_ai,
+            state=tk.DISABLED,
+            bg="#5c2d91", fg="white",
+            font=("Segoe UI", 10, "bold"),
+            relief=tk.FLAT, padx=12, pady=8, cursor="hand2",
+        )
         self.ai_export_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # Fortschrittsanzeige (nur während KI-Export sichtbar)
-        self.progress_frame = tk.Frame(exp_lf)
-        self.progress_lbl = tk.Label(
-            self.progress_frame, text="", anchor="w",
-            font=("Segoe UI", 9), fg="#5c2d91")
-        self.progress_lbl.pack(fill=tk.X, pady=(6, 1))
         self.progress_bar = ttk.Progressbar(
-            self.progress_frame, mode="determinate", maximum=100)
-        self.progress_bar.pack(fill=tk.X)
+            exp_lf, mode="determinate", maximum=100
+        )
+        self.progress_bar.pack(fill=tk.X, pady=(6, 0))
+        self.progress_bar["value"] = 0
 
         tk.Label(
             self.root,
-            text="F8: Aufnahme  │  F9: Text+Screenshot  │  F10: Nur Text  │  Strg+Enter: Nur Text",
-            bg="#f3f2f1", fg="#605e5c", font=("Segoe UI", 8)).pack(pady=(2, 8))
+            text="F8: Aufnahme  │  F9: Bereich-Screenshot  │  F10: Text speichern  "
+                 "│  Strg+Enter: Text speichern",
+            bg="#f3f2f1", fg="#605e5c", font=("Segoe UI", 8),
+        ).pack(pady=(2, 8))
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
     # -----------------------------------------------------------------------
-    # Vorschau
+    # Screenshot-Vorschau
     # -----------------------------------------------------------------------
 
     def _preview_placeholder(self):
         self.preview_canvas.delete("all")
         self.preview_canvas.create_text(
-            self.preview_canvas.winfo_reqwidth() // 2 or 228, 75,
-            text="Kein Screenshot aufgenommen", fill="#a0a0a0", font=("Segoe UI", 9))
+            self.preview_canvas.winfo_reqwidth() // 2 or 228,
+            75,
+            text="Kein Screenshot aufgenommen",
+            fill="#a0a0a0",
+            font=("Segoe UI", 9),
+        )
 
     def _show_preview(self, b64_data: str):
         try:
@@ -290,7 +351,9 @@ class ITDocuMakerApp:
             ph = ImageTk.PhotoImage(img)
             self.preview_canvas._ph = ph
             self.preview_canvas.delete("all")
-            self.preview_canvas.create_image(cw // 2, ch // 2, anchor="center", image=ph)
+            self.preview_canvas.create_image(
+                cw // 2, ch // 2, anchor="center", image=ph
+            )
             self._preview_b64 = b64_data
         except Exception:
             pass
@@ -312,7 +375,7 @@ class ITDocuMakerApp:
             pass
 
     # -----------------------------------------------------------------------
-    # Hotkeys
+    # Hotkeys (pynput)
     # -----------------------------------------------------------------------
 
     def _setup_hotkeys(self):
@@ -332,7 +395,7 @@ class ITDocuMakerApp:
         self._hk_listener.start()
 
     # -----------------------------------------------------------------------
-    # Aufnahme
+    # Aufnahme-Steuerung
     # -----------------------------------------------------------------------
 
     def toggle_recording(self):
@@ -346,32 +409,44 @@ class ITDocuMakerApp:
         self.events.clear()
         self._preview_placeholder()
         self._preview_b64 = ""
-        self.events.append(ActionEvent(timestamp=time.time(), action_type="start",
-                                       description="Aufnahme gestartet"))
+        self.events.append(ActionEvent(
+            timestamp=time.time(), action_type="start",
+            description="Aufnahme gestartet"
+        ))
         self.tracker.start()
+
         self.rec_btn.config(text="■  Aufnahme stoppen (F8)", bg="#a4262c")
         self._set_input_state(tk.NORMAL)
         self.export_btn.config(state=tk.DISABLED)
         self.ai_export_btn.config(state=tk.DISABLED)
-        self._set_status("🔴 Aufnahme läuft – Schritte dokumentieren ...", "#a4262c")
+        self._set_status("\U0001f534 Aufnahme läuft – Schritte dokumentieren ...", "#a4262c")
         self._update_counter()
 
     def _stop_recording(self):
         self.recording = False
         self.tracker.stop()
-        self.events.append(ActionEvent(timestamp=time.time(), action_type="stop",
-                                       description="Aufnahme beendet"))
+        self.events.append(ActionEvent(
+            timestamp=time.time(), action_type="stop",
+            description="Aufnahme beendet"
+        ))
+
         self.rec_btn.config(text="▶  Aufnahme starten (F8)", bg="#107c10")
         self._set_input_state(tk.DISABLED)
-        has_content = any(e.action_type in ("step", "click", "scroll") for e in self.events)
+
+        has_content = any(
+            e.action_type in ("step", "click", "scroll")
+            for e in self.events
+        )
         if has_content:
             self.export_btn.config(state=tk.NORMAL)
             self._check_ai_available()
-        steps   = sum(1 for e in self.events if e.action_type == "step")
-        auto_ev = sum(1 for e in self.events if e.action_type in ("click", "scroll"))
+
+        steps    = sum(1 for e in self.events if e.action_type == "step")
+        auto_ev  = sum(1 for e in self.events if e.action_type in ("click", "scroll"))
         self._set_status(
             f"✅ Gestoppt – {steps} Schritte, {auto_ev} Auto-Ereignisse. Vorlage wählen und exportieren.",
-            "#107c10")
+            "#107c10",
+        )
         self._update_counter()
 
     def _set_input_state(self, state):
@@ -391,39 +466,7 @@ class ITDocuMakerApp:
             pass
 
     # -----------------------------------------------------------------------
-    # Fortschritt
-    # -----------------------------------------------------------------------
-
-    def _start_progress(self):
-        self._progress_value = 0.0
-        self.progress_bar["value"] = 0
-        self.progress_frame.pack(fill=tk.X, pady=(6, 0))
-        self._tick_progress()
-
-    def _tick_progress(self):
-        if self._progress_value < 90:
-            self._progress_value = min(self._progress_value + 0.8, 90)
-            self.progress_bar["value"] = self._progress_value
-            if self._progress_value < 10:   stage = "Analysiere Aufzeichnung"
-            elif self._progress_value < 30: stage = "Sende Anfrage an KI-Server"
-            elif self._progress_value < 85: stage = "KI generiert Dokument"
-            else:                           stage = "Finalisiere Dokument"
-            self.progress_lbl.config(text=f"{stage} … {int(self._progress_value)}%")
-            self._progress_timer = self.root.after(400, self._tick_progress)
-
-    def _stop_progress(self, success: bool = True):
-        if self._progress_timer:
-            self.root.after_cancel(self._progress_timer)
-            self._progress_timer = None
-        if success:
-            self.progress_bar["value"] = 100
-            self.progress_lbl.config(text="Fertig – 100%")
-            self.root.after(2000, self.progress_frame.pack_forget)
-        else:
-            self.progress_frame.pack_forget()
-
-    # -----------------------------------------------------------------------
-    # Auto-Tracking
+    # Auto-Tracking (sekundär)
     # -----------------------------------------------------------------------
 
     def _on_tracked_event(self, action_type, description, x, y):
@@ -445,11 +488,14 @@ class ITDocuMakerApp:
             (action_type == "click"  and self.capture_on_click.get()) or
             (action_type == "scroll" and self.capture_on_scroll.get())
         )
-        ss_b64 = (self.capture.capture_thumbnail(quality=self.screenshot_quality.get())
-                  if take_ss else None)
+        ss_b64 = (
+            self.capture.capture_thumbnail(quality=self.screenshot_quality.get())
+            if take_ss else None
+        )
         self.events.append(ActionEvent(
             timestamp=time.time(), action_type=action_type,
-            description=description, screenshot_b64=ss_b64, x=x, y=y))
+            description=description, screenshot_b64=ss_b64, x=x, y=y,
+        ))
         self._update_counter()
 
     # -----------------------------------------------------------------------
@@ -463,10 +509,12 @@ class ITDocuMakerApp:
         if not title:
             self._set_status("Bitte erst einen Abschnittsnamen eingeben.", "#a4262c")
             return
-        self.events.append(ActionEvent(timestamp=time.time(), action_type="section",
-                                       description=title))
+        self.events.append(ActionEvent(
+            timestamp=time.time(), action_type="section",
+            description=title,
+        ))
         self.section_var.set("")
-        self._set_status(f"📌 Abschnitt gespeichert: {title[:60]}", "#ca5010")
+        self._set_status(f"\U0001f4cc Abschnitt gespeichert: {title[:60]}", "#ca5010")
         self._update_counter()
 
     def _get_note(self) -> str:
@@ -479,13 +527,15 @@ class ITDocuMakerApp:
         self.note_text.config(state=tk.NORMAL)
         self.note_text.delete("1.0", tk.END)
 
-        def take_area_screenshot(self):
+    # – F9: Bereichs-Screenshot –
+
+    def take_area_screenshot(self):
         if not self.recording or self._snipping_active:
             return
         text = self._get_note()
-        geo  = self.root.geometry()
+        orig_geo = self.root.geometry()
         self.root.geometry("+99999+0")
-        self.root.after(220, lambda: self._do_snip(text, geo))
+        self.root.after(220, lambda: self._do_snip(text, orig_geo))
 
     def _do_snip(self, text: str, orig_geo: str = ""):
         self._snipping_active = True
@@ -504,12 +554,15 @@ class ITDocuMakerApp:
         desc = text if text else "Screenshot"
         self.events.append(ActionEvent(
             timestamp=time.time(), action_type="step",
-            description=desc, screenshot_b64=b64, note=desc))
+            description=desc, screenshot_b64=b64, note=desc,
+        ))
         self._show_preview(b64)
         self.note_text.config(bg="#e8f5e9")
         self.root.after(800, lambda: self.note_text.config(bg="#fafafa"))
-        self._set_status(f"📷 Schritt gespeichert: {desc[:60]}", "#004578")
+        self._set_status(f"\U0001f4f7 Schritt gespeichert: {desc[:60]}", "#004578")
         self._update_counter()
+
+    # – F10: Nur Text –
 
     def save_step_text_only(self):
         if not self.recording:
@@ -520,7 +573,8 @@ class ITDocuMakerApp:
             return
         self.events.append(ActionEvent(
             timestamp=time.time(), action_type="step",
-            description=text, note=text))
+            description=text, note=text,
+        ))
         self._clear_note()
         self._set_status(f"✎ Schritt gespeichert: {text[:60]}", "#8764b8")
         self._update_counter()
@@ -534,11 +588,34 @@ class ITDocuMakerApp:
         sections = sum(1 for e in self.events if e.action_type == "section")
         ss       = sum(1 for e in self.events if e.screenshot_b64)
         self.counter_var.set(
-            f"Schritte: {steps}  |  Abschnitte: {sections}  |  Screenshots: {ss}")
+            f"Schritte: {steps}  |  Abschnitte: {sections}  |  Screenshots: {ss}"
+        )
 
     def _set_status(self, text: str, color: str = "#323130"):
         self.status_var.set(text)
         self.status_label.config(fg=color)
+
+    # -----------------------------------------------------------------------
+    # Fortschrittsbalken (KI-Export)
+    # -----------------------------------------------------------------------
+
+    def _start_progress(self):
+        self._progress_value = 0.0
+        self.progress_bar["value"] = 0
+        self._tick_progress()
+
+    def _tick_progress(self):
+        if self._progress_value < 90:
+            self._progress_value += 0.8
+            self.progress_bar["value"] = self._progress_value
+        self._progress_timer = self.root.after(200, self._tick_progress)
+
+    def _stop_progress(self):
+        if self._progress_timer is not None:
+            self.root.after_cancel(self._progress_timer)
+            self._progress_timer = None
+        self.progress_bar["value"] = 100
+        self.root.after(800, lambda: self.progress_bar.config(value=0))
 
     # -----------------------------------------------------------------------
     # Export
@@ -557,7 +634,8 @@ class ITDocuMakerApp:
             return
         from bridge.recording_to_doc import recording_to_doc_data_no_ai
         data = recording_to_doc_data_no_ai(
-            self.events, self.doc_title.get(), template_id, fmt)
+            self.events, self.doc_title.get(), template_id, fmt
+        )
         self._run_export(data, tpath, fmt)
 
     def export_with_ai(self):
@@ -569,10 +647,10 @@ class ITDocuMakerApp:
             messagebox.showerror("Vorlage fehlt", str(e))
             return
 
-        self._set_status("🤖 KI generiert Dokumenteninhalt ...", "#5c2d91")
+        self._set_status("\U0001f916 KI generiert Dokumenteninhalt ...", "#5c2d91")
         self.export_btn.config(state=tk.DISABLED)
         self.ai_export_btn.config(state=tk.DISABLED)
-        self.root.after(0, self._start_progress)
+        self._start_progress()
 
         def _thread():
             try:
@@ -582,20 +660,27 @@ class ITDocuMakerApp:
                     build_ai_description, events_to_doc_data,
                     inject_screenshots_into_markdown,
                 )
-                provider    = get_provider(cfg.get_ai_config())
-                description = build_ai_description(self.events, self.doc_title.get())
-                md    = provider.generate_document(
-                    description=description, title=self.doc_title.get(),
-                    fmt=fmt, template_id=template_id,
-                    chapters=[], aushang=False, refs=[])
+                provider = get_provider(cfg.get_ai_config())
+                description = build_ai_description(
+                    self.events, self.doc_title.get()
+                )
+                md = provider.generate_document(
+                    description=description,
+                    title=self.doc_title.get(),
+                    fmt=fmt,
+                    template_id=template_id,
+                    chapters=[], aushang=False, refs=[],
+                )
                 md_ss = inject_screenshots_into_markdown(md, self.events)
                 data  = events_to_doc_data(
-                    self.events, self.doc_title.get(), template_id, fmt, md_ss)
-                self.root.after(0, lambda: self._stop_progress(True))
+                    self.events, self.doc_title.get(),
+                    template_id, fmt, md_ss
+                )
+                self.root.after(0, self._stop_progress)
                 self.root.after(0, lambda: self._run_export(data, tpath, fmt))
             except Exception as exc:
                 msg = str(exc)
-                self.root.after(0, lambda: self._stop_progress(False))
+                self.root.after(0, self._stop_progress)
                 self.root.after(0, lambda: messagebox.showerror("KI-Fehler", msg))
                 self.root.after(0, lambda: self._set_status("KI-Export fehlgeschlagen.", "#a4262c"))
                 self.root.after(0, lambda: self.export_btn.config(state=tk.NORMAL))
@@ -604,17 +689,25 @@ class ITDocuMakerApp:
         threading.Thread(target=_thread, daemon=True).start()
 
     def _run_export(self, data: dict, template_path: str, fmt: str):
-        ext     = {"word": ".docx", "excel": ".xlsx", "ppt": ".pptx"}.get(fmt, ".docx")
+        ext = {"word": ".docx", "excel": ".xlsx", "ppt": ".pptx"}.get(fmt, ".docx")
         default = self.doc_title.get().replace(" ", "_").replace("/", "-") + ext
+
         path = filedialog.asksaveasfilename(
-            title="Dokument speichern", defaultextension=ext, initialfile=default,
-            filetypes=[(("Word-Dokument", "*.docx") if fmt == "word" else
-                        ("Excel-Datei",   "*.xlsx") if fmt == "excel" else
-                        ("PowerPoint",    "*.pptx")), ("Alle Dateien", "*.*")])
+            title="Dokument speichern",
+            defaultextension=ext,
+            initialfile=default,
+            filetypes=[
+                (("Word-Dokument", "*.docx") if fmt == "word" else
+                 ("Excel-Datei",   "*.xlsx") if fmt == "excel" else
+                 ("PowerPoint",    "*.pptx")),
+                ("Alle Dateien", "*.*"),
+            ],
+        )
         if not path:
             self.export_btn.config(state=tk.NORMAL)
             self._check_ai_available()
             return
+
         try:
             if fmt == "word":
                 from generator.word_generator import generate_word
@@ -625,16 +718,22 @@ class ITDocuMakerApp:
             else:
                 from generator.pptx_generator import generate_pptx
                 buf, _ = generate_pptx(data, template_path)
+
             buf.seek(0)
             with open(path, "wb") as f:
                 f.write(buf.read())
+
             self._set_status(f"✅ Exportiert: {Path(path).name}", "#107c10")
             self.export_btn.config(state=tk.NORMAL)
             self._check_ai_available()
-            if messagebox.askyesno("Export erfolgreich",
-                                   f"Dokument gespeichert:\n{path}\n\nJetzt öffnen?"):
+
+            if messagebox.askyesno(
+                "Export erfolgreich",
+                f"Dokument gespeichert:\n{path}\n\nJetzt öffnen?"
+            ):
                 import webbrowser
                 webbrowser.open(f"file:///{path}")
+
         except Exception as e:
             messagebox.showerror("Export fehlgeschlagen", str(e))
             self._set_status("Export fehlgeschlagen.", "#a4262c")
@@ -648,9 +747,10 @@ class ITDocuMakerApp:
     def _on_close(self):
         if self.recording:
             if not messagebox.askyesno(
-                    "Beenden",
-                    "Aufnahme läuft noch. Trotzdem beenden?\n"
-                    "(Nicht exportierte Daten gehen verloren.)"):
+                "Beenden",
+                "Aufnahme läuft noch. Trotzdem beenden?\n"
+                "(Nicht exportierte Daten gehen verloren.)"
+            ):
                 return
         if hasattr(self, "_hk_listener"):
             self._hk_listener.stop()
