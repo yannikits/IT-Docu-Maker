@@ -323,6 +323,20 @@ class ITDocuMakerApp:
                  "│  Strg+Enter: Text speichern",
             bg="#f3f2f1", fg="#605e5c", font=("Segoe UI", 8),
         ).pack(pady=(2, 8))
+       
+      # Fortschrittsanzeige (nur während KI-Export sichtbar)
+        self.progress_frame = tk.Frame(exp_lf)
+        self.progress_lbl = tk.Label(
+            self.progress_frame, text="", anchor="w",
+            font=("Segoe UI", 9), fg="#5c2d91",
+        )
+        self.progress_lbl.pack(fill=tk.X, pady=(6, 1))
+        self.progress_bar = ttk.Progressbar(
+            self.progress_frame, mode="determinate", maximum=100,
+        )
+        self.progress_bar.pack(fill=tk.X)
+        self._progress_timer = None
+        self._progress_value = 0.0
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -463,6 +477,33 @@ class ITDocuMakerApp:
                 self.ai_export_btn.config(state=tk.NORMAL)
         except Exception:
             pass
+    def _start_progress(self):
+        self._progress_value = 0.0
+        self.progress_bar["value"] = 0
+        self.progress_frame.pack(fill=tk.X, pady=(6, 0))
+        self._tick_progress()
+
+    def _tick_progress(self):
+        if self._progress_value < 90:
+            self._progress_value = min(self._progress_value + 0.8, 90)
+            self.progress_bar["value"] = self._progress_value
+            if self._progress_value < 10:   stage = "Analysiere Aufzeichnung"
+            elif self._progress_value < 30: stage = "Sende Anfrage an KI-Server"
+            elif self._progress_value < 85: stage = "KI generiert Dokument"
+            else:                           stage = "Finalisiere Dokument"
+            self.progress_lbl.config(text=f"{stage} … {int(self._progress_value)}%")
+            self._progress_timer = self.root.after(400, self._tick_progress)
+
+    def _stop_progress(self, success: bool = True):
+        if self._progress_timer:
+            self.root.after_cancel(self._progress_timer)
+            self._progress_timer = None
+        if success:
+            self.progress_bar["value"] = 100
+            self.progress_lbl.config(text="Fertig – 100%")
+            self.root.after(2000, self.progress_frame.pack_forget)
+        else:
+            self.progress_frame.pack_forget()
 
     # -----------------------------------------------------------------------
     # Auto-Tracking (sekundär)
@@ -554,7 +595,6 @@ class ITDocuMakerApp:
             timestamp=time.time(), action_type="step",
             description=desc, screenshot_b64=b64, note=desc,
         ))
-        self._clear_note()
         self._show_preview(b64)
         self._set_status(f"\U0001f4f7 Schritt gespeichert: {desc[:60]}", "#004578")
         self._update_counter()
@@ -572,7 +612,6 @@ class ITDocuMakerApp:
             timestamp=time.time(), action_type="step",
             description=text, note=text,
         ))
-        self._clear_note()
         self._set_status(f"✎ Schritt gespeichert: {text[:60]}", "#8764b8")
         self._update_counter()
 
@@ -625,6 +664,8 @@ class ITDocuMakerApp:
         self._set_status("\U0001f916 KI generiert Dokumenteninhalt ...", "#5c2d91")
         self.export_btn.config(state=tk.DISABLED)
         self.ai_export_btn.config(state=tk.DISABLED)
+        self.root.after(0, self._start_progress)
+
 
         def _thread():
             try:
@@ -650,6 +691,8 @@ class ITDocuMakerApp:
                     self.events, self.doc_title.get(),
                     template_id, fmt, md_ss
                 )
+                
+                self.root.after(0, lambda: self._stop_progress(True))
                 self.root.after(0, lambda: self._run_export(data, tpath, fmt))
             except Exception as exc:
                 msg = str(exc)
@@ -657,6 +700,8 @@ class ITDocuMakerApp:
                 self.root.after(0, lambda: self._set_status("KI-Export fehlgeschlagen.", "#a4262c"))
                 self.root.after(0, lambda: self.export_btn.config(state=tk.NORMAL))
                 self.root.after(0, self._check_ai_available)
+                self.root.after(0, lambda: self._stop_progress(False))
+
 
         threading.Thread(target=_thread, daemon=True).start()
 
