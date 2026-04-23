@@ -1,9 +1,7 @@
 """
-Snipping-Tool-artiger Bereichs-Screenshot.
-Zeigt ein Vollbild-Overlay an; der Benutzer wählt per Klick+Ziehen einen Bereich aus.
-Unterwanderung von HiDPI-Skalierung (Retina/Windows-Display-Scaling) wird behandelt.
+Snipping-Tool: Ein separates Overlay pro Monitor.
+Vermeidet Windows-DWM-Probleme mit kombinierten Mega-Fenstern.
 """
-
 import base64
 import tkinter as tk
 from io import BytesIO
@@ -14,137 +12,140 @@ from PIL import Image, ImageTk
 
 
 class SnippingTool:
-    """Snipping-Tool: Bereich auf dem Bildschirm auswählen und als JPEG-Base64 zurückgeben."""
-
     def capture_area(self, parent: tk.Tk) -> Optional[str]:
         """
-        Öffnet ein Vollbild-Overlay auf dem Primärmonitor.
-        Rückgabe: Base64-JPEG des ausgewählten Bereichs  oder  None bei Abbruch.
+        Oeffnet auf jedem angeschlossenen Monitor ein eigenes Overlay.
+        Rueckgabe: Base64-JPEG des ausgewaehlten Bereichs oder None bei Abbruch.
         """
-        # ── 1. Primärmonitor aufnehmen ────────────────────────────────────────
+        # 1. Alle Monitore einzeln aufnehmen
+        monitor_data = []
         with mss.mss() as sct:
-            mon = sct.monitors[1] if len(sct.monitors) > 1 else sct.monitors[0]
-            raw = sct.grab(mon)
-            mon_left = mon.get("left", 0)
-            mon_top  = mon.get("top",  0)
+            monitors = sct.monitors[1:] if len(sct.monitors) > 1 else sct.monitors[:1]
+            for mon in monitors:
+                raw = sct.grab(mon)
+                img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+                monitor_data.append({"mon": dict(mon), "img": img})
 
-        img_full = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+        result   = [None]
+        overlays = []
+        done     = [False]
 
-        # ── 2. Logische Bildschirmgröße (HiDPI-Skalierung) ───────────────────
-        screen_w = parent.winfo_screenwidth()
-        screen_h = parent.winfo_screenheight()
+        def close_all(b64=None):
+            if done[0]:
+                return
+            done[0]   = True
+            result[0] = b64
+            for ov in overlays:
+                try:
+                    ov.destroy()
+                except Exception:
+                    pass
 
-        scale_x = img_full.width  / screen_w
-        scale_y = img_full.height / screen_h
+        for md in monitor_data:
+            mon     = md["mon"]
+            img_mon = md["img"]  # physische Pixel
 
-        # Darstellungsbild in logischer Auflösung
-        if abs(scale_x - 1.0) > 0.05 or abs(scale_y - 1.0) > 0.05:
-            img_display = img_full.resize((screen_w, screen_h), Image.LANCZOS)
-        else:
-            img_display = img_full
-            scale_x = scale_y = 1.0
+            # HiDPI-Skalierung
+            scale_x = img_mon.width  / mon["width"]
+            scale_y = img_mon.height / mon["height"]
+            if abs(scale_x - 1.0) <= 0.05 and abs(scale_y - 1.0) <= 0.05:
+                img_display = img_mon
+                scale_x = scale_y = 1.0
+            else:
+                img_display = img_mon.resize((mon["width"], mon["height"]), Image.LANCZOS)
 
-        # Leicht abgedunkeltes Hintergrundbild
-        img_dark = img_display.point(lambda p: int(p * 0.58))
+            img_dark = img_display.point(lambda p: int(p * 0.58))
 
-        result = [None]
+            overlay = tk.Toplevel(parent)
+            overlay.overrideredirect(True)
+            overlay.attributes("-topmost", True)
+            overlay.geometry(f"{mon['width']}x{mon['height']}+{mon['left']}+{mon['top']}")
+            overlays.append(overlay)
 
-        # ── 3. Overlay-Fenster ────────────────────────────────────────────────
-        overlay = tk.Toplevel(parent)
-        overlay.overrideredirect(True)
-        overlay.attributes("-topmost", True)
-        overlay.geometry(f"{screen_w}x{screen_h}+{mon_left}+{mon_top}")
+            canvas = tk.Canvas(
+                overlay, width=mon["width"], height=mon["height"],
+                highlightthickness=0, cursor="crosshair", bg="black"
+            )
+            canvas.pack(fill="both", expand=True)
 
-        canvas = tk.Canvas(
-            overlay,
-            width=screen_w,
-            height=screen_h,
-            highlightthickness=0,
-            cursor="crosshair",
-            bg="black",
-        )
-        canvas.pack(fill="both", expand=True)
+            tk_dark = ImageTk.PhotoImage(img_dark)
+            canvas._tk_dark = tk_dark
+            canvas.create_image(0, 0, anchor="nw", image=tk_dark)
 
-        # Abgedunkeltes Bild als Hintergrund
-        tk_dark = ImageTk.PhotoImage(img_dark)
-        canvas._tk_dark = tk_dark          # GC-Schutz
-        canvas.create_image(0, 0, anchor="nw", image=tk_dark)
-
-        # Hinweisbanner
-        bw = 440
-        canvas.create_rectangle(
-            screen_w // 2 - bw // 2 - 6,  8,
-            screen_w // 2 + bw // 2 + 6, 50,
-            fill="#1a1a2e", outline="#0078d4", width=1,
-        )
-        canvas.create_text(
-            screen_w // 2, 29,
-            text="Bereich auswählen   –   Esc: Abbrechen",
-            fill="white",
-            font=("Segoe UI", 13, "bold"),
-        )
-
-        # ── 4. Maus-Interaktion ───────────────────────────────────────────────
-        state: dict = {"x0": 0, "y0": 0, "rect_id": None, "bright_id": None}
-
-        def _clear():
-            if state["rect_id"]:
-                canvas.delete(state["rect_id"])
-                state["rect_id"] = None
-            if state["bright_id"]:
-                canvas.delete(state["bright_id"])
-                state["bright_id"] = None
-
-        def on_press(e):
-            state["x0"], state["y0"] = e.x, e.y
-            _clear()
-
-        def on_drag(e):
-            _clear()
-            x0, y0, x1, y1 = state["x0"], state["y0"], e.x, e.y
-            bx0, by0 = min(x0, x1), min(y0, y1)
-            bx1, by1 = max(x0, x1), max(y0, y1)
-
-            # Helles Bild im ausgewählten Bereich
-            if bx1 > bx0 and by1 > by0:
-                bright_crop = img_display.crop((bx0, by0, bx1, by1))
-                ph = ImageTk.PhotoImage(bright_crop)
-                canvas._crop_ph = ph          # GC-Schutz
-                state["bright_id"] = canvas.create_image(
-                    bx0, by0, anchor="nw", image=ph
-                )
-
-            # Rechteck-Rahmen
-            state["rect_id"] = canvas.create_rectangle(
-                x0, y0, e.x, e.y,
-                outline="#0078d4", width=2,
+            # Banner auf jedem Monitor
+            cw = mon["width"]
+            bw = min(440, cw - 20)
+            canvas.create_rectangle(
+                cw // 2 - bw // 2 - 6,  8,
+                cw // 2 + bw // 2 + 6, 50,
+                fill="#1a1a2e", outline="#0078d4", width=1,
+            )
+            canvas.create_text(
+                cw // 2, 29,
+                text="Bereich auswaehlen   –   Esc: Abbrechen",
+                fill="white", font=("Segoe UI", 13, "bold"),
             )
 
-        def on_release(e):
-            x0 = min(state["x0"], e.x)
-            y0 = min(state["y0"], e.y)
-            x1 = max(state["x0"], e.x)
-            y1 = max(state["y0"], e.y)
+            def _attach(cv, _img_mon, _img_disp, _sx, _sy):
+                state = {"x0": 0, "y0": 0, "rect": None, "bright": None}
 
-            if x1 - x0 < 5 or y1 - y0 < 5:       # zu klein → abbrechen
-                overlay.destroy()
-                return
+                def _clear():
+                    if state["rect"]:
+                        cv.delete(state["rect"])
+                        state["rect"] = None
+                    if state["bright"]:
+                        cv.delete(state["bright"])
+                        state["bright"] = None
 
-            # In echte Pixelkoordinaten zurückrechnen (HiDPI)
-            rx0, ry0 = int(x0 * scale_x), int(y0 * scale_y)
-            rx1, ry1 = int(x1 * scale_x), int(y1 * scale_y)
+                def on_press(e):
+                    state["x0"], state["y0"] = e.x, e.y
+                    _clear()
 
-            cropped = img_full.crop((rx0, ry0, rx1, ry1))
-            buf = BytesIO()
-            cropped.save(buf, format="JPEG", quality=90, optimize=True)
-            result[0] = base64.b64encode(buf.getvalue()).decode("utf-8")
-            overlay.destroy()
+                def on_drag(e):
+                    _clear()
+                    x0, y0, x1, y1 = state["x0"], state["y0"], e.x, e.y
+                    bx0, by0 = min(x0, x1), min(y0, y1)
+                    bx1, by1 = max(x0, x1), max(y0, y1)
+                    if bx1 > bx0 and by1 > by0:
+                        crop = _img_disp.crop((bx0, by0, bx1, by1))
+                        ph   = ImageTk.PhotoImage(crop)
+                        cv._crop_ph = ph
+                        state["bright"] = cv.create_image(
+                            bx0, by0, anchor="nw", image=ph
+                        )
+                    state["rect"] = cv.create_rectangle(
+                        x0, y0, e.x, e.y, outline="#0078d4", width=2
+                    )
 
-        canvas.bind("<ButtonPress-1>",   on_press)
-        canvas.bind("<B1-Motion>",       on_drag)
-        canvas.bind("<ButtonRelease-1>", on_release)
-        overlay.bind("<Escape>", lambda _e: overlay.destroy())
+                def on_release(e):
+                    x0 = min(state["x0"], e.x)
+                    y0 = min(state["y0"], e.y)
+                    x1 = max(state["x0"], e.x)
+                    y1 = max(state["y0"], e.y)
+                    if x1 - x0 < 5 or y1 - y0 < 5:
+                        close_all(None)
+                        return
+                    # Physische Pixel-Koordinaten
+                    rx0, ry0 = int(x0 * _sx), int(y0 * _sy)
+                    rx1, ry1 = int(x1 * _sx), int(y1 * _sy)
+                    cropped = _img_mon.crop((rx0, ry0, rx1, ry1))
+                    buf = BytesIO()
+                    cropped.save(buf, format="JPEG", quality=90, optimize=True)
+                    close_all(base64.b64encode(buf.getvalue()).decode("utf-8"))
 
-        overlay.focus_force()
-        parent.wait_window(overlay)
+                cv.bind("<ButtonPress-1>",   on_press)
+                cv.bind("<B1-Motion>",       on_drag)
+                cv.bind("<ButtonRelease-1>", on_release)
+
+            _attach(canvas, img_mon, img_display, scale_x, scale_y)
+            overlay.bind("<Escape>", lambda _e: close_all(None))
+
+        if not overlays:
+            return None
+
+        # Alle Overlays fokussieren damit jeder Monitor Eingaben empfaengt
+        for ov in overlays:
+            ov.focus_force()
+
+        parent.wait_window(overlays[0])
         return result[0]
