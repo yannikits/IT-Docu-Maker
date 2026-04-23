@@ -596,6 +596,8 @@ class ITDocuMakerApp:
             description=desc, screenshot_b64=b64, note=desc,
         ))
         self._show_preview(b64)
+        self.note_text.config(bg="#e8f5e9")
+        self.root.after(800, lambda: self.note_text.config(bg="#fafafa"))
         self._set_status(f"\U0001f4f7 Schritt gespeichert: {desc[:60]}", "#004578")
         self._update_counter()
 
@@ -612,6 +614,7 @@ class ITDocuMakerApp:
             timestamp=time.time(), action_type="step",
             description=text, note=text,
         ))
+        self._clear_note()
         self._set_status(f"✎ Schritt gespeichert: {text[:60]}", "#8764b8")
         self._update_counter()
 
