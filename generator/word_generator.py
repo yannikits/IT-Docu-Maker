@@ -173,27 +173,41 @@ def _strip_md_links(text):
 
 
 def _try_insert_image(doc, line):
-    m = re.match(r'!\[([^\]]*)\]\(data:image/([^;]+);base64,([^)]+)\)', line.strip())
-    if not m:
+    """
+    Erkennt und bettet base64-Bilder ein.
+    Verwendet String-Parsing statt Regex um sehr lange base64-Strings zu verarbeiten.
+    """
+    s = line.strip()
+    if not (s.startswith('![') and '](data:image/' in s):
         return False
-    alt = m.group(1) or 'Bild'
-    b64_data = m.group(3)
+    alt = ''
     try:
+        alt_end = s.index('](')
+        alt = s[2:alt_end]
+        url_start = alt_end + 2
+        url_end   = s.rindex(')')
+        if url_end <= url_start:
+            return False
+        url = s[url_start:url_end]
+        if not url.startswith('data:image/') or ';base64,' not in url:
+            return False
+        b64_data = url.split(';base64,', 1)[1]
+
         import base64
         from docx.shared import Cm
         img_bytes = base64.b64decode(b64_data)
-        img_buf = io.BytesIO(img_bytes)
-        p = doc.add_paragraph()
+        img_buf   = io.BytesIO(img_bytes)
+        p   = doc.add_paragraph()
         run = p.add_run()
         run.add_picture(img_buf, width=Cm(14))
         if alt and alt != 'Bild':
-            cap = doc.add_paragraph()
+            cap     = doc.add_paragraph()
             cap_run = cap.add_run(alt)
             cap_run.italic = True
             cap_run.font.size = Pt(9)
             cap_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
     except Exception:
-        doc.add_paragraph(f'[Bild: {alt}]')
+        doc.add_paragraph(f'[Bild: {alt or "?"}]')
     return True
 
 
@@ -204,7 +218,7 @@ def _parse_inline(run_text):
     for m in pattern.finditer(run_text):
         if m.start() > last:
             segments.append((run_text[last:m.start()], False, False))
-        raw = m.group(0)
+        raw   = m.group(0)
         inner = m.group(2) or m.group(3) or m.group(4)
         segments.append((inner, raw.startswith('**'), raw.startswith('_') or raw.startswith('`')))
         last = m.end()
@@ -221,7 +235,7 @@ def _add_paragraph_with_inline(doc, text, style_map, style_key='normal'):
         p = doc.add_paragraph()
     for seg_text, bold, italic in _parse_inline(text):
         run = p.add_run(seg_text)
-        run.bold = bold
+        run.bold   = bold
         run.italic = italic
     return p
 
@@ -234,10 +248,10 @@ def _is_skip_heading(text):
 def _add_markdown_content(doc, markdown, style_map, fallback_color, skip_first_h1=False):
     lines = markdown.split('\n')
     i = 0
-    first_h1_done = not skip_first_h1
+    first_h1_done   = not skip_first_h1
     in_skip_section = False
-    in_table = False
-    table_rows = []
+    in_table        = False
+    table_rows      = []
 
     def flush_table():
         nonlocal in_table, table_rows
@@ -280,11 +294,14 @@ def _add_markdown_content(doc, markdown, style_map, fallback_color, skip_first_h
         if in_skip_section:
             i += 1; continue
 
-        if raw_line.strip().startswith('!['): 
+        # Bilder zuerst prüfen (vor _strip_md_links, der image-Syntax zerstören könnte)
+        if stripped.startswith('!['):
+            if in_table:
+                flush_table()
             if _try_insert_image(doc, raw_line):
                 i += 1; continue
 
-        line = _strip_md_links(raw_line)
+        line    = _strip_md_links(raw_line)
         stripped = line.strip()
 
         if stripped.startswith('|'):
@@ -327,16 +344,16 @@ def _add_markdown_content(doc, markdown, style_map, fallback_color, skip_first_h
 
 
 def generate_word(data: dict, template_path: str):
-    title = data.get('titleSubject', '') + ' - ' + data.get('titleTopic', '')
-    title = title.strip(' -')
-    aushang = data.get('aushang', False)
-    chapters = data.get('chapters', [])
-    refs = [r for r in data.get('refs', []) if r.get('num') or r.get('name')]
+    title      = data.get('titleSubject', '') + ' - ' + data.get('titleTopic', '')
+    title      = title.strip(' -')
+    aushang    = data.get('aushang', False)
+    chapters   = data.get('chapters', [])
+    refs       = [r for r in data.get('refs', []) if r.get('num') or r.get('name')]
     markdown_content = data.get('markdownContent', '').strip()
-    template_id = data.get('template', 'intern')
+    template_id      = data.get('template', 'intern')
 
-    doc = Document(template_path)
-    style_map = _build_style_map(doc)
+    doc        = Document(template_path)
+    style_map  = _build_style_map(doc)
     fallback_color = _get_template_heading_color(doc, style_map)
 
     toc_element = _extract_and_clear_body(doc)
