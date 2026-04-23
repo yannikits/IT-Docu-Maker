@@ -480,20 +480,22 @@ class ITDocuMakerApp:
         self.note_text.delete("1.0", tk.END)
 
     def take_area_screenshot(self):
-        if not self.recording or self._snipping_active:
-            return
-        text = self._get_note()
-        self.root.withdraw()
-        self.root.after(220, lambda: self._do_snip(text))
+    if not self.recording or self._snipping_active:
+        return
+    text = self._get_note()
+    geo  = self.root.geometry()
+    self.root.geometry("+99999+0")
+    self.root.after(220, lambda: self._do_snip(text, geo))
 
-    def _do_snip(self, text: str):
-        self._snipping_active = True
-        try:
-            b64 = self.snipping.capture_area(self.root)
-        finally:
-            self._snipping_active = False
-            self.root.deiconify()
-            self.root.lift()
+    def _do_snip(self, text: str, orig_geo: str = ""):
+    self._snipping_active = True
+    try:
+        b64 = self.snipping.capture_area(self.root)
+    finally:
+        self._snipping_active = False
+        if orig_geo:
+            self.root.geometry(orig_geo)
+        self.root.lift()
 
         if b64 is None:
             self._set_status("Screenshot abgebrochen.", "#605e5c")
