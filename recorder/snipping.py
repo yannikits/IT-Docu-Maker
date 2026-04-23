@@ -26,14 +26,14 @@ class SnippingTool:
                 img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
                 monitor_data.append({"mon": dict(mon), "img": img})
 
-        result  = [None]
+        result   = [None]
         overlays = []
         done     = [False]
 
         def close_all(b64=None):
             if done[0]:
                 return
-            done[0]  = True
+            done[0]   = True
             result[0] = b64
             for ov in overlays:
                 try:
@@ -43,9 +43,9 @@ class SnippingTool:
 
         for md in monitor_data:
             mon     = md["mon"]
-            img_mon = md["img"]   # physische Pixel
+            img_mon = md["img"]  # physische Pixel
 
-            # HiDPI: physische Pixel vs. logische Pixel
+            # HiDPI-Skalierung
             scale_x = img_mon.width  / mon["width"]
             scale_y = img_mon.height / mon["height"]
             if abs(scale_x - 1.0) <= 0.05 and abs(scale_y - 1.0) <= 0.05:
@@ -62,16 +62,17 @@ class SnippingTool:
             overlay.geometry(f"{mon['width']}x{mon['height']}+{mon['left']}+{mon['top']}")
             overlays.append(overlay)
 
-            canvas = tk.Canvas(overlay,
-                               width=mon["width"], height=mon["height"],
-                               highlightthickness=0, cursor="crosshair", bg="black")
+            canvas = tk.Canvas(
+                overlay, width=mon["width"], height=mon["height"],
+                highlightthickness=0, cursor="crosshair", bg="black"
+            )
             canvas.pack(fill="both", expand=True)
 
             tk_dark = ImageTk.PhotoImage(img_dark)
             canvas._tk_dark = tk_dark
             canvas.create_image(0, 0, anchor="nw", image=tk_dark)
 
-            # Banner
+            # Banner auf jedem Monitor
             cw = mon["width"]
             bw = min(440, cw - 20)
             canvas.create_rectangle(
@@ -85,7 +86,6 @@ class SnippingTool:
                 fill="white", font=("Segoe UI", 13, "bold"),
             )
 
-            # Mouse-Handler in Closure einschliessen
             def _attach(cv, _img_mon, _img_disp, _sx, _sy):
                 state = {"x0": 0, "y0": 0, "rect": None, "bright": None}
 
@@ -110,18 +110,22 @@ class SnippingTool:
                         crop = _img_disp.crop((bx0, by0, bx1, by1))
                         ph   = ImageTk.PhotoImage(crop)
                         cv._crop_ph = ph
-                        state["bright"] = cv.create_image(bx0, by0, anchor="nw", image=ph)
+                        state["bright"] = cv.create_image(
+                            bx0, by0, anchor="nw", image=ph
+                        )
                     state["rect"] = cv.create_rectangle(
                         x0, y0, e.x, e.y, outline="#0078d4", width=2
                     )
 
                 def on_release(e):
-                    x0, y0 = min(state["x0"], e.x), min(state["y0"], e.y)
-                    x1, y1 = max(state["x0"], e.x), max(state["y0"], e.y)
+                    x0 = min(state["x0"], e.x)
+                    y0 = min(state["y0"], e.y)
+                    x1 = max(state["x0"], e.x)
+                    y1 = max(state["y0"], e.y)
                     if x1 - x0 < 5 or y1 - y0 < 5:
                         close_all(None)
                         return
-                    # Physische Pixel-Koordinaten im Monitor-Screenshot
+                    # Physische Pixel-Koordinaten
                     rx0, ry0 = int(x0 * _sx), int(y0 * _sy)
                     rx1, ry1 = int(x1 * _sx), int(y1 * _sy)
                     cropped = _img_mon.crop((rx0, ry0, rx1, ry1))
@@ -139,6 +143,9 @@ class SnippingTool:
         if not overlays:
             return None
 
-        overlays[0].focus_force()
+        # Alle Overlays fokussieren damit jeder Monitor Eingaben empfaengt
+        for ov in overlays:
+            ov.focus_force()
+
         parent.wait_window(overlays[0])
         return result[0]
