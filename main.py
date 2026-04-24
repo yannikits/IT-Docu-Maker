@@ -523,8 +523,8 @@ class ITDocuMakerApp:
                 os.makedirs(ss_dir, exist_ok=True)
                 img_path = os.path.join(ss_dir, f"screenshot_{n:03d}.png")
                 try:
-                    with open(img_path, "wb") as f:
-                        f.write(base64.b64decode(ss_b64))
+                    pil_img = Image.open(BytesIO(base64.b64decode(ss_b64)))
+                    pil_img.save(img_path, format="PNG")
                 except Exception:
                     pass
 
@@ -604,8 +604,10 @@ class ITDocuMakerApp:
 
         img_filename = f"screenshot_{n:03d}.png"
         img_path = os.path.join(ss_dir, img_filename)
-        with open(img_path, "wb") as f:
-            f.write(base64.b64decode(b64))
+
+        # ── FIX: über PIL als echtes PNG speichern (snipping gibt JPEG zurück) ──
+        pil_img = Image.open(BytesIO(base64.b64decode(b64)))
+        pil_img.save(img_path, format="PNG")
 
         try:
             cursor_line = int(self.note_text.index(tk.INSERT).split('.')[0])
@@ -651,6 +653,7 @@ class ITDocuMakerApp:
             pass
 
     def _get_markdown_content(self) -> str:
+        """Text-Feldinhalt mit Datei-Referenzen als base64 data-URIs aufgelöst."""
         content = self.note_text.get("1.0", tk.END).strip()
         if not self._session_dir:
             return content
@@ -664,8 +667,10 @@ class ITDocuMakerApp:
             try:
                 with open(full_path, 'rb') as f:
                     img_bytes = f.read()
+                # Echten MIME-Typ anhand Magic Bytes erkennen
+                mime = "image/jpeg" if img_bytes[:2] == b'\xff\xd8' else "image/png"
                 b64_str = base64.b64encode(img_bytes).decode('ascii')
-                return f"![{alt}](data:image/png;base64,{b64_str})"
+                return f"![{alt}](data:{mime};base64,{b64_str})"
             except Exception:
                 return m.group(0)
 
