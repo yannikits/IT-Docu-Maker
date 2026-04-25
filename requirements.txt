@@ -12,5 +12,5 @@ lxml>=5.0.0
 # KI-Provider (je nach config.ini einen oder mehrere installieren)
 # OpenAI / ChatGPT / Azure OpenAI:
 openai>=1.0.0
-# Anthropic Claude (Kommentar entfernen wenn verwendet):
-# anthropic>=0.25.0
+# Anthropic Claude:
+anthropic>=0.25.0,<0.52.0

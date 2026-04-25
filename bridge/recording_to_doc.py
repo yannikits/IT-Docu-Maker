@@ -1,39 +1,14 @@
 """
 Brücke: Aufzeichnung → Dokumentdaten
-
-Event-Typen (Priorität):
-  Primär:
-    section  – Kapitelmarker        (description = Kapitelname)
-    step     – Manueller Schritt    (description = Notiztext, screenshot_b64 = optional)
-  Sekundär (Auto-Tracking, Fallback wenn keine Schritte vorhanden):
-    click, scroll  – automatisch aufgezeichnete Aktionen
-
-Dokumentstruktur (ohne KI):
-  ## 1. Abschnittsname
-    1. Schritt-Text
-       [Bild]
-    2. Schritt-Text
-       ...
-  ## 2. Nächster Abschnitt
-    ...
-
-Wenn keine section-Events vorhanden: alle Schritte in einem Abschnitt "Vorgehen".
-Wenn keine step-Events vorhanden: Auto-Tracking-Events als Schritte verwenden.
 """
 
 from datetime import datetime
 from typing import List, Any
 
+MAX_AI_DESCRIPTION_CHARS = 40_000  # ~10 000 tokens, safe for all providers
 
-# ---------------------------------------------------------------------------
-# Hilfsfunktionen
-# ---------------------------------------------------------------------------
 
 def _group_into_sections(events) -> list:
-    """
-    Gruppiert Events in Abschnitte.
-    Rückgabe: Liste von {"heading": str|None, "steps": [...], "auto": [...]}
-    """
     sections = []
     current  = {"heading": None, "steps": [], "auto": []}
 
@@ -48,7 +23,6 @@ def _group_into_sections(events) -> list:
             current["steps"].append(ev)
         elif ev.action_type in ("click", "scroll"):
             current["auto"].append(ev)
-        # key-Events werden ignoriert
 
     if current["steps"] or current["auto"] or current["heading"]:
         sections.append(current)
@@ -56,25 +30,11 @@ def _group_into_sections(events) -> list:
     return sections
 
 
-# ---------------------------------------------------------------------------
-# Markdown-Generierung (ohne KI)
-# ---------------------------------------------------------------------------
-
 def build_recording_markdown(events, include_screenshots: bool = True) -> str:
-    """
-    Konvertiert Aufzeichnung direkt in Markdown.
-
-    Logik:
-    • Manuelle Schritte (step) sind Primärinhalt.
-    • Wenn kein manueller Schritt in einem Abschnitt: Auto-Events als Fallback.
-    • Abschnitt-Marker (section) werden zu ## Überschriften.
-    • Kein Abschnitt-Marker → Standardabschnitt »Vorgehen«.
-    """
     sections = _group_into_sections(events)
     if not sections:
         return ""
 
-    # Kein expliziter Abschnitt → Standardname
     if len(sections) == 1 and sections[0]["heading"] is None:
         sections[0]["heading"] = "Vorgehen"
 
@@ -90,7 +50,6 @@ def build_recording_markdown(events, include_screenshots: bool = True) -> str:
             if ev.action_type == "step":
                 lines.append(f"{snum}. {ev.description}")
             else:
-                # Auto-Tracking-Fallback
                 ts    = datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S")
                 label = {"click": "Klick", "scroll": "Scrollen"}.get(ev.action_type, "Aktion")
                 lines.append(f"{snum}. **{label}** ({ts}): {ev.description}")
@@ -106,15 +65,10 @@ def build_recording_markdown(events, include_screenshots: bool = True) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Text-Beschreibung für KI-Provider
-# ---------------------------------------------------------------------------
-
 def build_ai_description(events, title: str) -> str:
     """
     Erstellt eine rein textuelle Beschreibung der Aufzeichnung für den KI-Provider.
-    Keine Base64-Bilder (zu groß für API-Anfragen).
-    Die KI soll daraus einen professionellen Dokumentationstext erzeugen.
+    Keine Base64-Bilder. Auto-Events werden nur verwendet wenn keine manuellen Schritte vorhanden.
     """
     lines = [
         "Folgende Bildschirmaufzeichnung soll als professionelle IT-Dokumentation aufbereitet werden.",
@@ -130,29 +84,30 @@ def build_ai_description(events, title: str) -> str:
 
     for sec in sections:
         if sec["heading"]:
-            lines.append(f"\n=== ABSCHNITT: {sec["heading"]} ===")
+            lines.append(f"\n=== ABSCHNITT: {sec['heading']} ===")
 
-        for ev in sec["steps"]:
-            ss = " [Screenshot vorhanden]" if ev.screenshot_b64 else ""
-            lines.append(f"  SCHRITT: {ev.description}{ss}")
+        # Only use auto-events as fallback when no manual steps exist in this section
+        content_events = sec["steps"] if sec["steps"] else sec["auto"]
 
-        for ev in sec["auto"]:
-            ts    = datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S")
-            label = {"click": "Klick", "scroll": "Scroll"}.get(ev.action_type, "Aktion")
-            lines.append(f"  ({label} {ts}) {ev.description}")
+        for ev in content_events:
+            if ev.action_type == "step":
+                ss = " [Screenshot vorhanden]" if ev.screenshot_b64 else ""
+                lines.append(f"  SCHRITT: {ev.description}{ss}")
+            else:
+                ts    = datetime.fromtimestamp(ev.timestamp).strftime("%H:%M:%S")
+                label = {"click": "Klick", "scroll": "Scroll"}.get(ev.action_type, "Aktion")
+                lines.append(f"  ({label} {ts}) {ev.description}")
 
-    return "\n".join(lines)
+    result = "\n".join(lines)
 
+    if len(result) > MAX_AI_DESCRIPTION_CHARS:
+        result = result[:MAX_AI_DESCRIPTION_CHARS]
+        result += "\n\n[Aufzeichnung gekürzt – zu viele Schritte für die API-Anfrage.]"
 
-# ---------------------------------------------------------------------------
-# Screenshots in KI-Markdown einbetten
-# ---------------------------------------------------------------------------
+    return result
+
 
 def inject_screenshots_into_markdown(ai_markdown: str, events) -> str:
-    """
-    Hängt alle Screenshots als Anhang ans KI-generierte Markdown an.
-    (Die KI erhält keine Bilder – sie werden nachträglich eingebettet.)
-    """
     screenshots = [
         (ev, i + 1)
         for i, ev in enumerate(events)
@@ -172,15 +127,10 @@ def inject_screenshots_into_markdown(ai_markdown: str, events) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Daten-Dict für Generator-Funktionen
-# ---------------------------------------------------------------------------
-
 def events_to_doc_data(
     events, title: str, template_id: str, fmt: str,
     markdown_content: str = "",
 ) -> dict:
-    """Erstellt das data-Dict für generate_word / generate_excel / generate_pptx."""
     parts = title.split(" - ", 1) if " - " in title else [title, ""]
     return {
         "titleSubject":    parts[0].strip(),
@@ -197,6 +147,5 @@ def events_to_doc_data(
 def recording_to_doc_data_no_ai(
     events, title: str, template_id: str, fmt: str
 ) -> dict:
-    """Komplette Konvertierung ohne KI: Aufzeichnung → Markdown → doc-Datenstruktur."""
     markdown = build_recording_markdown(events, include_screenshots=True)
     return events_to_doc_data(events, title, template_id, fmt, markdown)
