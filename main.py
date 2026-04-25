@@ -3,20 +3,19 @@
 IT-Docu-Maker
 Workflow:
   1. Aufnahme starten (F8)
-  2. Kapitel (# H1) und Unterkapitel (## H2) in Text einfügen
-  3. Dokumentationstext im Textfeld schreiben
-  4. F9: Bereich-Screenshot → wird in Ordner gespeichert + Verweis in Text eingefügt
-     F10: Markdown speichern
+  2. Abschnitt/Kapitel benennen  →  »Neuer Abschnitt«
+  3. Vorgehenstext ins Notizfeld schreiben
+  4. F9: Bereich-Screenshot → speichert Text + Screenshot als Schritt
+     F10: Text-Schritt ohne Screenshot speichern
   5. Aufnahme stoppen (F8)  →  Vorlage wählen  →  exportieren
 
 Hotkeys:
   F8   Aufnahme starten / stoppen
-  F9   Bereich-Screenshot auswählen und als Datei speichern
-  F10  Markdown-Datei speichern
+  F9   Bereich-Screenshot auswählen (speichert aktuellen Text + Bild)
+  F10  Textnotiz ohne Screenshot speichern
 """
 
 import os
-import re
 import sys
 import time
 import threading
@@ -27,17 +26,14 @@ from pathlib import Path
 from io import BytesIO
 import base64
 import queue
+import importlib.util
 
 # ---------------------------------------------------------------------------
 # Dependency check
 # ---------------------------------------------------------------------------
 REQUIRED = {"mss": "mss", "PIL": "Pillow", "pynput": "pynput"}
-missing = []
-for mod, pkg in REQUIRED.items():
-    try:
-        __import__(mod)
-    except ImportError:
-        missing.append(pkg)
+missing = [pkg for mod, pkg in REQUIRED.items()
+           if not importlib.util.find_spec(mod)]
 if missing:
     print(f"Installiere: {', '.join(missing)}")
     import subprocess
@@ -60,7 +56,7 @@ TEMPLATE_FILES = {
     "netzwerk":      ("Netzwerkdoku_Vorlage.xlsx",           "Netzwerkdokumentation (Excel)", "excel"),
     "intern_xl":     ("Internes_Dokument_Vorlage.xlsx",      "Internes Dokument (Excel)",     "excel"),
     "extern_xl":     ("Externes_Dokument_Vorlage.xlsx",      "Externes Dokument (Excel)",     "excel"),
-    "praesentation": ("Präsentationsvorlage_Vorlage.pptx",  "Präsentation (PPTX)",           "ppt"),
+    "praesentation": ("Präsentationsvorlage_Vorlage.pptx", "Präsentation (PPTX)",          "ppt"),
 }
 
 
@@ -88,29 +84,23 @@ class ITDocuMakerApp:
         self.root = tk.Tk()
         self.root.title("IT-Docu-Maker")
         self.root.resizable(True, True)
-        self.root.minsize(480, 640)
+        self.root.minsize(480, 600)
 
-        self.events: list           = []
-        self.recording: bool        = False
-        self._snipping_active       = False
+        self.events: list         = []
+        self.recording: bool      = False
+        self._snipping_active     = False
 
-        self._progress_timer        = None
-        self._progress_value        = 0.0
-        self._session_dir: str      = ""
-        self._screenshot_count: int = 0
-
-        self.capture  = ScreenCapture()
-        self.tracker  = EventTracker(self._on_tracked_event)
-        self.snipping = SnippingTool()
+        self.capture   = ScreenCapture()
+        self.tracker   = EventTracker(self._on_tracked_event)
+        self.snipping  = SnippingTool()
         self.event_queue: queue.Queue = queue.Queue()
 
         self.doc_title          = tk.StringVar(
             value=f"IT-Dokumentation {datetime.now().strftime('%Y-%m-%d')}"
         )
-        self.capture_on_click   = tk.BooleanVar(value=False)
+        self.capture_on_click   = tk.BooleanVar(value=True)
         self.capture_on_scroll  = tk.BooleanVar(value=False)
         self.screenshot_quality = tk.IntVar(value=85)
-        self.subsection_var     = tk.StringVar()
 
         self._build_ui()
         self._setup_hotkeys()
@@ -122,8 +112,8 @@ class ITDocuMakerApp:
 
     def _build_ui(self):
         self.root.configure(bg="#f3f2f1")
+        PAD = {"padx": 12, "pady": 4}
 
-        # ── Titelleiste ──────────────────────────────────────────────────────
         hdr = tk.Frame(self.root, bg="#0078d4", pady=10)
         hdr.pack(fill=tk.X)
         tk.Label(hdr, text="IT-Docu-Maker",
@@ -133,9 +123,8 @@ class ITDocuMakerApp:
                  bg="#0078d4", fg="#c7e0f4",
                  font=("Segoe UI", 10)).pack(side=tk.LEFT)
 
-        # ── Statuszeile ──────────────────────────────────────────────────────
         self.status_var = tk.StringVar(
-            value="Bereit – Aufnahme starten, Inhalt erfassen, dann exportieren."
+            value="Bereit – Aufnahme starten, Schritte dokumentieren, dann exportieren."
         )
         self.status_label = tk.Label(
             self.root, textvariable=self.status_var,
@@ -143,7 +132,6 @@ class ITDocuMakerApp:
         )
         self.status_label.pack(fill=tk.X, padx=12, pady=(6, 2))
 
-        # ── Aufnahme-Steuerung ───────────────────────────────────────────────
         self.rec_btn = tk.Button(
             self.root,
             text="▶  Aufnahme starten (F8)",
@@ -154,31 +142,30 @@ class ITDocuMakerApp:
         )
         self.rec_btn.pack(fill=tk.X, padx=12, pady=(4, 2))
 
-        self.counter_var = tk.StringVar(value="Kapitel: 0  |  Unterkapitel: 0  |  Screenshots: 0")
+        self.counter_var = tk.StringVar(value="Schritte: 0  |  Abschnitte: 0  |  Screenshots: 0")
         tk.Label(
             self.root, textvariable=self.counter_var,
             bg="#f3f2f1", fg="#605e5c", font=("Segoe UI", 9)
         ).pack(anchor="w", padx=12)
 
-        # ── Dokumentstruktur & Inhalt ────────────────────────────────────────
-        step_lf = ttk.LabelFrame(self.root, text="Dokumentstruktur & Inhalt", padding=(10, 6))
-        step_lf.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
+        step_lf = ttk.LabelFrame(self.root, text="Schritt erfassen", padding=(10, 6))
+        step_lf.pack(fill=tk.X, padx=12, pady=6)
 
-        # – Kapitel (H1) –
         sec_row = tk.Frame(step_lf)
-        sec_row.pack(fill=tk.X, pady=(0, 4))
-        tk.Label(sec_row, text="Kapitel (H1):",
-                 font=("Segoe UI", 9), width=17, anchor="w").pack(side=tk.LEFT)
+        sec_row.pack(fill=tk.X, pady=(0, 8))
+        tk.Label(sec_row, text="Abschnitt / Kapitel:",
+                 font=("Segoe UI", 9)).pack(side=tk.LEFT)
         self.section_var = tk.StringVar()
         self.section_entry = tk.Entry(
             sec_row, textvariable=self.section_var,
-            font=("Segoe UI", 9),
+            font=("Segoe UI", 9), width=22,
             state=tk.DISABLED,
         )
-        self.section_entry.pack(side=tk.LEFT, padx=(4, 4), fill=tk.X, expand=True)
+        self.section_entry.pack(side=tk.LEFT, padx=(6, 4), fill=tk.X, expand=True)
         self.section_entry.bind("<Return>", lambda _e: self.add_section())
+
         self.new_section_btn = tk.Button(
-            sec_row, text="+ Kapitel",
+            sec_row, text="+ Neuer Abschnitt",
             command=self.add_section,
             state=tk.DISABLED,
             bg="#ca5010", fg="white",
@@ -187,38 +174,15 @@ class ITDocuMakerApp:
         )
         self.new_section_btn.pack(side=tk.LEFT)
 
-        # – Unterkapitel (H2) –
-        subsec_row = tk.Frame(step_lf)
-        subsec_row.pack(fill=tk.X, pady=(0, 8))
-        tk.Label(subsec_row, text="Unterkapitel (H2):",
-                 font=("Segoe UI", 9), width=17, anchor="w").pack(side=tk.LEFT)
-        self.subsection_entry = tk.Entry(
-            subsec_row, textvariable=self.subsection_var,
-            font=("Segoe UI", 9),
-            state=tk.DISABLED,
-        )
-        self.subsection_entry.pack(side=tk.LEFT, padx=(4, 4), fill=tk.X, expand=True)
-        self.subsection_entry.bind("<Return>", lambda _e: self.add_subsection())
-        self.new_subsection_btn = tk.Button(
-            subsec_row, text="+ Unterkapitel",
-            command=self.add_subsection,
-            state=tk.DISABLED,
-            bg="#ca5010", fg="white",
-            font=("Segoe UI", 9),
-            relief=tk.FLAT, padx=8, pady=3, cursor="hand2",
-        )
-        self.new_subsection_btn.pack(side=tk.LEFT)
-
-        # – Dokument-Textfeld –
-        tk.Label(step_lf, text="Dokumentinhalt (Markdown):",
+        tk.Label(step_lf, text="Notiz / Beschreibung des Schritts:",
                  font=("Segoe UI", 9), anchor="w").pack(fill=tk.X, pady=(0, 3))
 
         text_outer = tk.Frame(step_lf, bg="#c8c6c4", bd=1, relief=tk.SOLID)
-        text_outer.pack(fill=tk.BOTH, expand=True)
+        text_outer.pack(fill=tk.X)
         self.note_text = tk.Text(
             text_outer,
             font=("Segoe UI", 10),
-            height=10,
+            height=4,
             relief=tk.FLAT,
             bg="#fafafa",
             fg="#323130",
@@ -231,14 +195,15 @@ class ITDocuMakerApp:
         self.note_text.configure(yscrollcommand=note_scroll.set)
         self.note_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         note_scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
         self.note_text.bind("<Control-Return>", lambda _e: self.save_step_text_only())
 
-        # – Aktions-Buttons –
         btn_row = tk.Frame(step_lf)
         btn_row.pack(fill=tk.X, pady=(6, 0))
+
         self.screenshot_btn = tk.Button(
             btn_row,
-            text="\U0001f4f7  Screenshot (F9)",
+            text="\U0001f4f7  Bereich-Screenshot (F9)",
             command=self.take_area_screenshot,
             state=tk.DISABLED,
             bg="#004578", fg="white",
@@ -246,9 +211,10 @@ class ITDocuMakerApp:
             relief=tk.FLAT, padx=10, pady=5, cursor="hand2",
         )
         self.screenshot_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+
         self.save_btn = tk.Button(
             btn_row,
-            text="💾  Speichern (F10)",
+            text="✎  Text speichern (F10)",
             command=self.save_step_text_only,
             state=tk.DISABLED,
             bg="#8764b8", fg="white",
@@ -257,10 +223,9 @@ class ITDocuMakerApp:
         )
         self.save_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        # – Screenshot-Vorschau –
         self.preview_canvas = tk.Canvas(
             step_lf,
-            width=456, height=110,
+            width=456, height=150,
             bg="#edebe9",
             highlightthickness=1,
             highlightbackground="#c8c6c4",
@@ -271,7 +236,6 @@ class ITDocuMakerApp:
         self.preview_canvas.bind("<Button-1>", self._on_preview_click)
         self._preview_b64: str = ""
 
-        # ── Einstellungen ────────────────────────────────────────────────────
         cfg_lf = ttk.LabelFrame(self.root, text="Einstellungen", padding=(10, 4))
         cfg_lf.pack(fill=tk.X, padx=12, pady=4)
 
@@ -284,7 +248,7 @@ class ITDocuMakerApp:
         row2 = tk.Frame(cfg_lf)
         row2.pack(fill=tk.X, pady=(4, 0))
         tk.Label(row2, text="Auto-SS bei:", font=("Segoe UI", 9)).pack(side=tk.LEFT)
-        tk.Checkbutton(row2, text="Klick",    variable=self.capture_on_click,
+        tk.Checkbutton(row2, text="Klick",   variable=self.capture_on_click,
                        font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(6, 0))
         tk.Checkbutton(row2, text="Scrollen", variable=self.capture_on_scroll,
                        font=("Segoe UI", 9)).pack(side=tk.LEFT, padx=(4, 0))
@@ -299,7 +263,6 @@ class ITDocuMakerApp:
             lambda *_: self.qlbl.config(text=f"{self.screenshot_quality.get()}%")
         )
 
-        # ── Export ───────────────────────────────────────────────────────────
         ttk.Separator(self.root, orient="horizontal").pack(fill=tk.X, padx=12, pady=6)
 
         exp_lf = ttk.LabelFrame(self.root, text="Dokument exportieren", padding=(10, 6))
@@ -327,6 +290,7 @@ class ITDocuMakerApp:
             relief=tk.FLAT, padx=12, pady=8, cursor="hand2",
         )
         self.export_btn.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 4))
+
         self.ai_export_btn = tk.Button(
             exp_btns, text="\U0001f916  Exportieren (mit KI)",
             command=self.export_with_ai,
@@ -337,13 +301,10 @@ class ITDocuMakerApp:
         )
         self.ai_export_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        self.progress_bar = ttk.Progressbar(exp_lf, mode="determinate", maximum=100)
-        self.progress_bar.pack(fill=tk.X, pady=(6, 0))
-        self.progress_bar["value"] = 0
-
         tk.Label(
             self.root,
-            text="F8: Aufnahme  │  F9: Screenshot  │  F10: Speichern  │  Strg+Enter: Speichern",
+            text="F8: Aufnahme  │  F9: Bereich-Screenshot  │  F10: Text speichern  "
+                 "│  Strg+Enter: Text speichern",
             bg="#f3f2f1", fg="#605e5c", font=("Segoe UI", 8),
         ).pack(pady=(2, 8))
 
@@ -357,7 +318,7 @@ class ITDocuMakerApp:
         self.preview_canvas.delete("all")
         self.preview_canvas.create_text(
             self.preview_canvas.winfo_reqwidth() // 2 or 228,
-            55,
+            75,
             text="Kein Screenshot aufgenommen",
             fill="#a0a0a0",
             font=("Segoe UI", 9),
@@ -367,12 +328,14 @@ class ITDocuMakerApp:
         try:
             img = Image.open(BytesIO(base64.b64decode(b64_data)))
             cw = self.preview_canvas.winfo_width() or 456
-            ch = self.preview_canvas.winfo_height() or 110
+            ch = self.preview_canvas.winfo_height() or 150
             img.thumbnail((cw - 4, ch - 4), Image.LANCZOS)
             ph = ImageTk.PhotoImage(img)
             self.preview_canvas._ph = ph
             self.preview_canvas.delete("all")
-            self.preview_canvas.create_image(cw // 2, ch // 2, anchor="center", image=ph)
+            self.preview_canvas.create_image(
+                cw // 2, ch // 2, anchor="center", image=ph
+            )
             self._preview_b64 = b64_data
         except Exception:
             pass
@@ -394,7 +357,7 @@ class ITDocuMakerApp:
             pass
 
     # -----------------------------------------------------------------------
-    # Hotkeys (pynput)
+    # Hotkeys
     # -----------------------------------------------------------------------
 
     def _setup_hotkeys(self):
@@ -423,52 +386,47 @@ class ITDocuMakerApp:
         else:
             self._start_recording()
 
-    def _safe_title(self) -> str:
-        return re.sub(r'[^\w\s\-äöüÄÖÜß]', '_', self.doc_title.get()).strip()[:50]
-
     def _start_recording(self):
         self.recording = True
         self.events.clear()
         self._preview_placeholder()
         self._preview_b64 = ""
-        self._screenshot_count = 0
-
-        safe = self._safe_title()
-        date = datetime.now().strftime("%Y-%m-%d_%H%M")
-        sessions_base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "sessions")
-        self._session_dir = os.path.join(sessions_base, f"{safe}_{date}")
-        os.makedirs(self._session_dir, exist_ok=True)
-
-        self.note_text.config(state=tk.NORMAL)
-        self.note_text.delete("1.0", tk.END)
-
+        self.events.append(ActionEvent(
+            timestamp=time.time(), action_type="start",
+            description="Aufnahme gestartet"
+        ))
         self.tracker.start()
+
         self.rec_btn.config(text="■  Aufnahme stoppen (F8)", bg="#a4262c")
         self._set_input_state(tk.NORMAL)
         self.export_btn.config(state=tk.DISABLED)
         self.ai_export_btn.config(state=tk.DISABLED)
-        self._set_status(
-            f"\U0001f534 Aufnahme läuft – Ordner: {Path(self._session_dir).name}",
-            "#a4262c"
-        )
+        self._set_status("\U0001f534 Aufnahme läuft – Schritte dokumentieren ...", "#a4262c")
         self._update_counter()
 
     def _stop_recording(self):
         self.recording = False
         self.tracker.stop()
-
-        has_content = bool(self.note_text.get("1.0", tk.END).strip())
+        self.events.append(ActionEvent(
+            timestamp=time.time(), action_type="stop",
+            description="Aufnahme beendet"
+        ))
 
         self.rec_btn.config(text="▶  Aufnahme starten (F8)", bg="#107c10")
         self._set_input_state(tk.DISABLED)
 
+        has_content = any(
+            e.action_type in ("step", "click", "scroll")
+            for e in self.events
+        )
         if has_content:
             self.export_btn.config(state=tk.NORMAL)
             self._check_ai_available()
 
-        self._autosave_md()
+        steps   = sum(1 for e in self.events if e.action_type == "step")
+        auto_ev = sum(1 for e in self.events if e.action_type in ("click", "scroll"))
         self._set_status(
-            f"✅ Gestoppt – gespeichert in: {Path(self._session_dir).name}",
+            f"✅ Gestoppt – {steps} Schritte, {auto_ev} Auto-Ereignisse. Vorlage wählen und exportieren.",
             "#107c10",
         )
         self._update_counter()
@@ -477,11 +435,9 @@ class ITDocuMakerApp:
         bg = "#fafafa" if state == tk.NORMAL else "#f3f2f1"
         self.note_text.config(state=state, bg=bg)
         self.section_entry.config(state=state)
-        self.subsection_entry.config(state=state)
         self.screenshot_btn.config(state=state)
         self.save_btn.config(state=state)
         self.new_section_btn.config(state=state)
-        self.new_subsection_btn.config(state=state)
 
     def _check_ai_available(self):
         try:
@@ -492,7 +448,7 @@ class ITDocuMakerApp:
             pass
 
     # -----------------------------------------------------------------------
-    # Auto-Tracking (sekundär)
+    # Auto-Tracking
     # -----------------------------------------------------------------------
 
     def _on_tracked_event(self, action_type, description, x, y):
@@ -514,54 +470,33 @@ class ITDocuMakerApp:
             (action_type == "click"  and self.capture_on_click.get()) or
             (action_type == "scroll" and self.capture_on_scroll.get())
         )
-        if take_ss and self._session_dir:
-            ss_b64 = self.capture.capture_thumbnail(quality=self.screenshot_quality.get())
-            if ss_b64:
-                self._screenshot_count += 1
-                n = self._screenshot_count
-                ss_dir = os.path.join(self._session_dir, "screenshots")
-                os.makedirs(ss_dir, exist_ok=True)
-                img_path = os.path.join(ss_dir, f"screenshot_{n:03d}.png")
-                try:
-                    pil_img = Image.open(BytesIO(base64.b64decode(ss_b64)))
-                    pil_img.save(img_path, format="PNG")
-                except Exception:
-                    pass
+        ss_b64 = (
+            self.capture.capture_thumbnail(quality=self.screenshot_quality.get())
+            if take_ss else None
+        )
+        self.events.append(ActionEvent(
+            timestamp=time.time(), action_type=action_type,
+            description=description, screenshot_b64=ss_b64, x=x, y=y,
+        ))
+        self._update_counter()
 
     # -----------------------------------------------------------------------
     # Manuelle Aktionen
     # -----------------------------------------------------------------------
-
-    def _insert_at_cursor(self, text: str):
-        try:
-            self.note_text.insert(tk.INSERT, text)
-        except Exception:
-            self.note_text.insert(tk.END, text)
 
     def add_section(self):
         if not self.recording:
             return
         title = self.section_var.get().strip()
         if not title:
-            self._set_status("Bitte einen Kapitelnamen eingeben.", "#a4262c")
+            self._set_status("Bitte erst einen Abschnittsnamen eingeben.", "#a4262c")
             return
-        self._insert_at_cursor(f"\n# {title}\n\n")
+        self.events.append(ActionEvent(
+            timestamp=time.time(), action_type="section",
+            description=title,
+        ))
         self.section_var.set("")
-        self._autosave_md()
-        self._set_status(f"\U0001f4cc Kapitel eingefügt: {title[:60]}", "#ca5010")
-        self._update_counter()
-
-    def add_subsection(self):
-        if not self.recording:
-            return
-        title = self.subsection_var.get().strip()
-        if not title:
-            self._set_status("Bitte einen Unterkapitelnamen eingeben.", "#a4262c")
-            return
-        self._insert_at_cursor(f"\n## {title}\n\n")
-        self.subsection_var.set("")
-        self._autosave_md()
-        self._set_status(f"\U0001f4cc Unterkapitel eingefügt: {title[:60]}", "#ca5010")
+        self._set_status(f"\U0001f4cc Abschnitt gespeichert: {title[:60]}", "#ca5010")
         self._update_counter()
 
     def _get_note(self) -> str:
@@ -574,148 +509,73 @@ class ITDocuMakerApp:
         self.note_text.config(state=tk.NORMAL)
         self.note_text.delete("1.0", tk.END)
 
-    # – F9: Bereichs-Screenshot –
-
     def take_area_screenshot(self):
         if not self.recording or self._snipping_active:
             return
-        orig_geo = self.root.geometry()
-        self.root.geometry("+99999+0")
-        self.root.after(220, lambda: self._do_snip(orig_geo))
+        text = self._get_note()
+        self.root.withdraw()
+        self.root.after(220, lambda: self._do_snip(text))
 
-    def _do_snip(self, orig_geo: str = ""):
+    def _do_snip(self, text: str):
         self._snipping_active = True
         try:
             b64 = self.snipping.capture_area(self.root)
         finally:
             self._snipping_active = False
-            if orig_geo:
-                self.root.geometry(orig_geo)
+            self.root.deiconify()
             self.root.lift()
 
         if b64 is None:
             self._set_status("Screenshot abgebrochen.", "#605e5c")
             return
 
-        self._screenshot_count += 1
-        n = self._screenshot_count
-        ss_dir = os.path.join(self._session_dir, "screenshots")
-        os.makedirs(ss_dir, exist_ok=True)
+        from recorder.annotation_editor import AnnotationEditor
+        editor = AnnotationEditor(self.root, b64)
+        if editor.result_b64 is None:
+            self._set_status("Screenshot verworfen.", "#605e5c")
+            return
+        b64 = editor.result_b64
 
-        img_filename = f"screenshot_{n:03d}.png"
-        img_path = os.path.join(ss_dir, img_filename)
-
-        # ── FIX: über PIL als echtes PNG speichern (snipping gibt JPEG zurück) ──
-        pil_img = Image.open(BytesIO(base64.b64decode(b64)))
-        pil_img.save(img_path, format="PNG")
-
-        try:
-            cursor_line = int(self.note_text.index(tk.INSERT).split('.')[0])
-            start = f"{max(1, cursor_line - 3)}.0"
-            context = self.note_text.get(start, tk.INSERT).strip()
-            desc = context[-200:] if context else f"Screenshot {n}"
-        except Exception:
-            desc = f"Screenshot {n}"
-
-        txt_path = os.path.join(ss_dir, f"screenshot_{n:03d}.txt")
-        with open(txt_path, "w", encoding="utf-8") as f:
-            f.write(desc)
-
-        self._insert_at_cursor(f"\n![Screenshot {n}](screenshots/{img_filename})\n\n")
+        desc = text if text else "Screenshot"
+        self.events.append(ActionEvent(
+            timestamp=time.time(), action_type="step",
+            description=desc, screenshot_b64=b64, note=desc,
+        ))
+        self._clear_note()
         self._show_preview(b64)
-        self.note_text.config(bg="#e8f5e9")
-        self.root.after(800, lambda: self.note_text.config(bg="#fafafa"))
-        self._autosave_md()
-        self._set_status(f"\U0001f4f7 Screenshot {n} gespeichert: {img_filename}", "#004578")
+        self._set_status(f"\U0001f4f7 Schritt gespeichert: {desc[:60]}", "#004578")
         self._update_counter()
-
-    # – F10: Markdown speichern –
 
     def save_step_text_only(self):
         if not self.recording:
             return
-        self._autosave_md()
-        self._set_status("💾 Markdown gespeichert", "#8764b8")
-
-    # -----------------------------------------------------------------------
-    # Session / Markdown
-    # -----------------------------------------------------------------------
-
-    def _autosave_md(self):
-        if not self._session_dir:
+        text = self._get_note()
+        if not text:
+            self._set_status("Kein Text zum Speichern eingegeben.", "#605e5c")
             return
-        content = self.note_text.get("1.0", tk.END)
-        md_path = os.path.join(self._session_dir, f"{self._safe_title()}.md")
-        try:
-            with open(md_path, "w", encoding="utf-8") as f:
-                f.write(content)
-        except Exception:
-            pass
-
-    def _get_markdown_content(self) -> str:
-        """Text-Feldinhalt mit Datei-Referenzen als base64 data-URIs aufgelöst."""
-        content = self.note_text.get("1.0", tk.END).strip()
-        if not self._session_dir:
-            return content
-
-        def replace_file_ref(m):
-            alt  = m.group(1)
-            path = m.group(2)
-            if path.startswith('data:'):
-                return m.group(0)
-            full_path = os.path.join(self._session_dir, path)
-            try:
-                with open(full_path, 'rb') as f:
-                    img_bytes = f.read()
-                # Echten MIME-Typ anhand Magic Bytes erkennen
-                mime = "image/jpeg" if img_bytes[:2] == b'\xff\xd8' else "image/png"
-                b64_str = base64.b64encode(img_bytes).decode('ascii')
-                return f"![{alt}](data:{mime};base64,{b64_str})"
-            except Exception:
-                return m.group(0)
-
-        return re.sub(r'!\[([^\]]*)\]\(([^)]+)\)', replace_file_ref, content)
+        self.events.append(ActionEvent(
+            timestamp=time.time(), action_type="step",
+            description=text, note=text,
+        ))
+        self._clear_note()
+        self._set_status(f"✎ Schritt gespeichert: {text[:60]}", "#8764b8")
+        self._update_counter()
 
     # -----------------------------------------------------------------------
     # Zähler & Status
     # -----------------------------------------------------------------------
 
     def _update_counter(self):
-        try:
-            content = self.note_text.get("1.0", tk.END)
-        except Exception:
-            content = ""
-        h1_count = len(re.findall(r'^# .+', content, re.MULTILINE))
-        h2_count = len(re.findall(r'^## .+', content, re.MULTILINE))
+        steps    = sum(1 for e in self.events if e.action_type == "step")
+        sections = sum(1 for e in self.events if e.action_type == "section")
+        ss       = sum(1 for e in self.events if e.screenshot_b64)
         self.counter_var.set(
-            f"Kapitel: {h1_count}  |  Unterkapitel: {h2_count}  |  Screenshots: {self._screenshot_count}"
+            f"Schritte: {steps}  |  Abschnitte: {sections}  |  Screenshots: {ss}"
         )
 
     def _set_status(self, text: str, color: str = "#323130"):
         self.status_var.set(text)
         self.status_label.config(fg=color)
-
-    # -----------------------------------------------------------------------
-    # Fortschrittsbalken (KI-Export)
-    # -----------------------------------------------------------------------
-
-    def _start_progress(self):
-        self._progress_value = 0.0
-        self.progress_bar["value"] = 0
-        self._tick_progress()
-
-    def _tick_progress(self):
-        if self._progress_value < 90:
-            self._progress_value += 0.8
-            self.progress_bar["value"] = self._progress_value
-        self._progress_timer = self.root.after(200, self._tick_progress)
-
-    def _stop_progress(self):
-        if self._progress_timer is not None:
-            self.root.after_cancel(self._progress_timer)
-            self._progress_timer = None
-        self.progress_bar["value"] = 100
-        self.root.after(800, lambda: self.progress_bar.config(value=0))
 
     # -----------------------------------------------------------------------
     # Export
@@ -732,9 +592,10 @@ class ITDocuMakerApp:
         except FileNotFoundError as e:
             messagebox.showerror("Vorlage fehlt", str(e))
             return
-        from bridge.recording_to_doc import events_to_doc_data
-        markdown = self._get_markdown_content()
-        data = events_to_doc_data([], self.doc_title.get(), template_id, fmt, markdown)
+        from bridge.recording_to_doc import recording_to_doc_data_no_ai
+        data = recording_to_doc_data_no_ai(
+            self.events, self.doc_title.get(), template_id, fmt
+        )
         self._run_export(data, tpath, fmt)
 
     def export_with_ai(self):
@@ -746,40 +607,37 @@ class ITDocuMakerApp:
             messagebox.showerror("Vorlage fehlt", str(e))
             return
 
-        self._set_status("\U0001f916 KI verbessert Dokumenteninhalt ...", "#5c2d91")
+        self._set_status("\U0001f916 KI generiert Dokumenteninhalt ...", "#5c2d91")
         self.export_btn.config(state=tk.DISABLED)
         self.ai_export_btn.config(state=tk.DISABLED)
-        self._start_progress()
-
-        markdown = self._get_markdown_content()
 
         def _thread():
             try:
                 import config as cfg
                 from ai_providers.base import get_provider
-                from bridge.recording_to_doc import events_to_doc_data
-
-                provider = get_provider(cfg.get_ai_config())
-                description = (
-                    "Bitte verbessere und formatiere diese IT-Dokumentation professionell. "
-                    "Behalte alle Kapitelstrukturen (# und ##), Inhalte und Screenshot-Verweise "
-                    "(![...](data:image/...)) exakt bei. Antworte NUR mit dem verbesserten "
-                    "Markdown-Dokument, ohne Einleitung oder Erklärung.\n\n"
-                    + markdown
+                from bridge.recording_to_doc import (
+                    build_ai_description, events_to_doc_data,
+                    inject_screenshots_into_markdown,
                 )
-                md_enhanced = provider.generate_document(
+                provider = get_provider(cfg.get_ai_config())
+                description = build_ai_description(
+                    self.events, self.doc_title.get()
+                )
+                md = provider.generate_document(
                     description=description,
                     title=self.doc_title.get(),
                     fmt=fmt,
                     template_id=template_id,
                     chapters=[], aushang=False, refs=[],
                 )
-                data = events_to_doc_data([], self.doc_title.get(), template_id, fmt, md_enhanced)
-                self.root.after(0, self._stop_progress)
+                md_ss = inject_screenshots_into_markdown(md, self.events)
+                data  = events_to_doc_data(
+                    self.events, self.doc_title.get(),
+                    template_id, fmt, md_ss
+                )
                 self.root.after(0, lambda: self._run_export(data, tpath, fmt))
             except Exception as exc:
                 msg = str(exc)
-                self.root.after(0, self._stop_progress)
                 self.root.after(0, lambda: messagebox.showerror("KI-Fehler", msg))
                 self.root.after(0, lambda: self._set_status("KI-Export fehlgeschlagen.", "#a4262c"))
                 self.root.after(0, lambda: self.export_btn.config(state=tk.NORMAL))
@@ -848,7 +706,7 @@ class ITDocuMakerApp:
             if not messagebox.askyesno(
                 "Beenden",
                 "Aufnahme läuft noch. Trotzdem beenden?\n"
-                "(Nicht gespeicherte Daten gehen verloren.)"
+                "(Nicht exportierte Daten gehen verloren.)"
             ):
                 return
         if hasattr(self, "_hk_listener"):
