@@ -284,8 +284,9 @@ class AnnotationEditor:
 
             elif t == "rect":
                 x0, y0, x1, y1 = ann["coords"]
-                draw.rectangle([x0, y0, x1, y1],
-                               outline=ann["color"], width=ann["width"])
+                draw.rectangle(
+                    [min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)],
+                    outline=ann["color"], width=ann["width"])
 
             elif t == "arrow":
                 x0, y0, x1, y1 = ann["coords"]
