@@ -279,10 +279,14 @@ class AnnotationEditor:
             elif t == "text":
                 if ann.get("canvas_item"):
                     try:
-                        bb = self.cv.bbox(ann["canvas_item"])
-                        if bb and bb[0]-4 <= cx <= bb[2]+4 and bb[1]-4 <= cy <= bb[3]+4:
+                        hits = self.cv.find_overlapping(cx - 8, cy - 8, cx + 8, cy + 8)
+                        if ann["canvas_item"] in hits:
                             return i
-                        continue
+                        bb = self.cv.bbox(ann["canvas_item"])
+                        if bb is not None:
+                            if bb[0] - 10 <= cx <= bb[2] + 10 and bb[1] - 10 <= cy <= bb[3] + 10:
+                                return i
+                            continue
                     except Exception:
                         pass
                 tx, ty_img = ann["coords"]
