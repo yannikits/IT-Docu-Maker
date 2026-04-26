@@ -299,6 +299,9 @@ class AnnotationEditor:
     def _on_motion(self, e):
         if self._tool != "select":
             return
+        if self._drag_mode:
+            self.cv.config(cursor="fleur")
+            return
         handle = self._hit_handle(e.x, e.y)
         if handle:
             self.cv.config(cursor=self._RESIZE_CURSORS.get(handle, "fleur"))
@@ -480,6 +483,7 @@ class AnnotationEditor:
             ann["canvas_item"] = self.cv.create_text(
                 cx, cy, text=ann["text"], fill=ann["color"],
                 font=("Segoe UI", fs_cv, "bold"), anchor="nw")
+            self._bind_text_item(ann["canvas_item"], ann)
         elif t == "blur":
             x0, y0, x1, y1 = ann["region"]
             cx0, cy0 = self._to_cv(x0, y0)
@@ -525,6 +529,35 @@ class AnnotationEditor:
             "font_size":   max(14, int(14 / self._s)),
             "canvas_item": item,
         })
+        self._bind_text_item(item, self._annotations[-1])
+
+    def _bind_text_item(self, item_id: int, ann: dict):
+        """Bind <ButtonPress-1> directly to a text canvas item.
+
+        Tkinter's internal item hit-test is far more reliable than any
+        manual coordinate calculation, so we bypass _hit_annotation entirely
+        for text and handle selection right here.
+        """
+        def on_press(e):
+            if self._tool != "select":
+                return
+            # If there is already a selected annotation check for handle hits first;
+            # if the user clicked a resize/move handle let the widget-level handler
+            # deal with it so we don't steal the event.
+            if self._selected_idx >= 0 and self._hit_handle(e.x, e.y):
+                return
+            try:
+                idx = next(i for i, a in enumerate(self._annotations) if a is ann)
+            except StopIteration:
+                return
+            self._selected_idx = idx
+            self._drag_mode    = "move"
+            self._drag_start   = (e.x, e.y)
+            self._drag_orig    = self._get_coords(ann)
+            self._draw_selection(idx)
+            return "break"   # stop propagation to canvas widget binding
+
+        self.cv.tag_bind(item_id, "<ButtonPress-1>", on_press)
 
     def _cancel_text(self):
         if self._text_entry:
