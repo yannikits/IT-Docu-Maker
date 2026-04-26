@@ -36,6 +36,8 @@ class AnnotationEditor:
         self._cur_item    = None
         self._text_entry  = None
         self._text_pos    = (0, 0)
+        self._edit_entry  = None
+        self._edit_ann    = None
 
         # Select-Tool-Zustand
         self._selected_idx = -1
@@ -75,6 +77,7 @@ class AnnotationEditor:
         self.cv.bind("<ButtonRelease-1>", self._on_release)
         self.cv.bind("<Motion>",          self._on_motion)
         self.win.bind("<Escape>",         lambda _: self._deselect())
+        self.win.bind("<Delete>",         self._delete_selected)
 
         self.win.update_idletasks()
         x = (sw - self.win.winfo_width())  // 2
@@ -94,6 +97,7 @@ class AnnotationEditor:
                          ("rect",   "▭  Rahmen"),
                          ("arrow",  "→  Pfeil"),
                          ("text",   "T  Text"),
+                         ("number", "①  Nr."),
                          ("blur",   "⊘  Blur")]:
             btn = tk.Button(tb, text=lbl, bg="#3c3c3c", fg="white",
                             font=("Segoe UI", 9, "bold"), relief=tk.FLAT,
@@ -206,14 +210,16 @@ class AnnotationEditor:
                 "end":   e_cv,
                 "move":  ((s_cv[0] + e_cv[0]) // 2, (s_cv[1] + e_cv[1]) // 2),
             }
-        elif t == "text":
-            tx, ty_img = ann["coords"]
-            tcx, tcy = self._to_cv(tx, ty_img)
-            fs_cv = max(11, int(13 * self._s))
-            text = ann.get("text", "")
-            est_w = max(20, int(len(text) * fs_cv * 0.65)) + 8
-            est_h = int(fs_cv * 1.6) + 4
-            return {"move": (tcx + est_w // 2, tcy + est_h // 2)}
+        elif t in ("text", "number"):
+            cx, cy = self._to_cv(*ann["coords"])
+            if t == "text":
+                fs_cv = max(11, int(13 * self._s))
+                est_w = max(20, int(len(ann.get("text", "")) * fs_cv * 0.65)) + 8
+                est_h = int(fs_cv * 1.6) + 4
+                return {"move": (cx + est_w // 2, cy + est_h // 2)}
+            else:  # number
+                r = max(14, int(ann.get("radius", 14) * self._s))
+                return {"move": (cx, cy)}
         return {}
 
     def _draw_selection(self, idx: int):
@@ -283,6 +289,11 @@ class AnnotationEditor:
                 est_h = int(fs_cv * 1.6) + 4
                 if tcx - 6 <= cx <= tcx + est_w and tcy - 6 <= cy <= tcy + est_h:
                     return i
+            elif t == "number":
+                ncx, ncy = self._to_cv(*ann["coords"])
+                r = max(14, int(ann.get("radius", 14) * self._s)) + 6
+                if math.hypot(cx - ncx, cy - ncy) <= r:
+                    return i
         return -1
 
     # ── Cursor im Select-Modus ────────────────────────────────────────────────
@@ -318,6 +329,9 @@ class AnnotationEditor:
             return
         if self._tool == "text":
             self._start_text(e.x, e.y)
+            return
+        if self._tool == "number":
+            self._place_number(e.x, e.y)
             return
         self._deselect()
         self._drawing  = True
@@ -427,7 +441,7 @@ class AnnotationEditor:
             return ann["coords"]
         if t == "blur":
             return ann["region"]
-        if t == "text":
+        if t in ("text", "number"):
             return ann["coords"]
         return None
 
@@ -436,7 +450,7 @@ class AnnotationEditor:
         orig = self._drag_orig
         t    = ann["type"]
 
-        if t == "text":
+        if t in ("text", "number"):
             if mode == "move":
                 ox, oy = orig
                 ann["coords"] = (int(ox + ddx), int(oy + ddy))
@@ -462,6 +476,9 @@ class AnnotationEditor:
         if ann.get("canvas_item"):
             self.cv.delete(ann["canvas_item"])
             ann["canvas_item"] = None
+        if ann.get("canvas_text"):
+            self.cv.delete(ann["canvas_text"])
+            ann["canvas_text"] = None
         t = ann["type"]
         if t == "rect":
             x0, y0, x1, y1 = ann["coords"]
@@ -483,13 +500,146 @@ class AnnotationEditor:
             ann["canvas_item"] = self.cv.create_text(
                 cx, cy, text=ann["text"], fill=ann["color"],
                 font=("Segoe UI", fs_cv, "bold"), anchor="nw")
-            self._bind_text_item(ann["canvas_item"], ann)
+            self._bind_selectable_item(ann["canvas_item"], ann)
+        elif t == "number":
+            ix, iy = ann["coords"]
+            cx, cy = self._to_cv(ix, iy)
+            r = max(14, int(ann.get("radius", 14) * self._s))
+            fs_cv = max(9, int(r * 0.9))
+            ann["canvas_item"] = self.cv.create_oval(
+                cx - r, cy - r, cx + r, cy + r,
+                fill=ann["color"], outline=ann["color"])
+            ann["canvas_text"] = self.cv.create_text(
+                cx, cy, text=str(ann["number"]), fill="white",
+                font=("Segoe UI", fs_cv, "bold"), anchor="center")
+            self._bind_selectable_item(ann["canvas_item"], ann)
+            self._bind_selectable_item(ann["canvas_text"], ann)
         elif t == "blur":
             x0, y0, x1, y1 = ann["region"]
             cx0, cy0 = self._to_cv(x0, y0)
             cx1, cy1 = self._to_cv(x1, y1)
             ann["canvas_item"] = self.cv.create_rectangle(
                 cx0, cy0, cx1, cy1, outline="#00cfff", width=1, dash=(4, 3))
+
+    # ── Nummerierungs-Tool ────────────────────────────────────────────────────
+
+    def _place_number(self, cx: int, cy: int):
+        ix, iy = self._to_img(cx, cy)
+        num = self._next_number()
+        ann = {
+            "type":        "number",
+            "number":      num,
+            "coords":      (ix, iy),
+            "radius":      int(14 / self._s),
+            "color":       self._color,
+            "canvas_item": None,
+            "canvas_text": None,
+        }
+        self._annotations.append(ann)
+        self._redraw_annotation_item(ann)
+
+    def _next_number(self) -> int:
+        existing = [a["number"] for a in self._annotations if a["type"] == "number"]
+        return max(existing, default=0) + 1
+
+    # ── Inline-Edit (Text & Nummer) ───────────────────────────────────────────
+
+    def _start_edit(self, ann: dict):
+        if self._edit_entry:
+            return
+        t = ann["type"]
+        cx, cy = self._to_cv(*ann["coords"])
+        if t == "number":
+            r = max(14, int(ann.get("radius", 14) * self._s))
+            cx -= r
+            cy -= r
+        fs = max(11, int(13 * self._s))
+        initial = ann["text"] if t == "text" else str(ann["number"])
+        ent = tk.Entry(self.cv, fg=ann["color"],
+                       font=("Segoe UI", fs, "bold"),
+                       bg="#fffde7", relief=tk.SOLID, bd=1,
+                       insertbackground=ann["color"],
+                       width=max(6, len(initial) + 2))
+        ent.insert(0, initial)
+        ent.select_range(0, tk.END)
+        self.cv.create_window(cx, cy, window=ent, anchor="nw", tags="edit_te")
+        ent.focus_set()
+        self._edit_entry = ent
+        self._edit_ann   = ann
+
+        def commit(_=None):
+            val = ent.get().strip()
+            self.cv.delete("edit_te")
+            ent.destroy()
+            self._edit_entry = None
+            self._edit_ann   = None
+            if not val:
+                return
+            if t == "text":
+                ann["text"] = val
+            else:
+                try:
+                    ann["number"] = int(val)
+                except ValueError:
+                    return
+            self._deselect()
+            self._redraw_annotation_item(ann)
+
+        def cancel(_=None):
+            self.cv.delete("edit_te")
+            ent.destroy()
+            self._edit_entry = None
+            self._edit_ann   = None
+
+        ent.bind("<Return>", commit)
+        ent.bind("<Escape>", cancel)
+
+    # ── Löschen mit Entf-Taste ────────────────────────────────────────────────
+
+    def _delete_selected(self, event=None):
+        if self._tool != "select" or self._selected_idx < 0:
+            return
+        idx = self._selected_idx
+        ann = self._annotations[idx]
+        self._deselect()
+        if ann.get("canvas_item"):
+            self.cv.delete(ann["canvas_item"])
+        if ann.get("canvas_text"):
+            self.cv.delete(ann["canvas_text"])
+        self._annotations.pop(idx)
+        if ann["type"] == "blur":
+            self._refresh_base()
+
+    # ── Selektierbare Items binden ────────────────────────────────────────────
+
+    def _bind_selectable_item(self, item_id: int, ann: dict):
+        def on_press(e):
+            if self._tool != "select":
+                return
+            if self._selected_idx >= 0 and self._hit_handle(e.x, e.y):
+                return
+            try:
+                idx = next(i for i, a in enumerate(self._annotations) if a is ann)
+            except StopIteration:
+                return
+            self._selected_idx = idx
+            self._drag_mode    = "move"
+            self._drag_start   = (e.x, e.y)
+            self._drag_orig    = self._get_coords(ann)
+            self._draw_selection(idx)
+            return "break"
+
+        def on_dblclick(e):
+            if self._tool != "select":
+                return
+            if ann["type"] not in ("text", "number"):
+                return
+            self._drag_mode = ""
+            self._start_edit(ann)
+            return "break"
+
+        self.cv.tag_bind(item_id, "<ButtonPress-1>",   on_press)
+        self.cv.tag_bind(item_id, "<Double-Button-1>", on_dblclick)
 
     # ── Text-Tool ─────────────────────────────────────────────────────────────
 
@@ -529,35 +679,7 @@ class AnnotationEditor:
             "font_size":   max(14, int(14 / self._s)),
             "canvas_item": item,
         })
-        self._bind_text_item(item, self._annotations[-1])
-
-    def _bind_text_item(self, item_id: int, ann: dict):
-        """Bind <ButtonPress-1> directly to a text canvas item.
-
-        Tkinter's internal item hit-test is far more reliable than any
-        manual coordinate calculation, so we bypass _hit_annotation entirely
-        for text and handle selection right here.
-        """
-        def on_press(e):
-            if self._tool != "select":
-                return
-            # If there is already a selected annotation check for handle hits first;
-            # if the user clicked a resize/move handle let the widget-level handler
-            # deal with it so we don't steal the event.
-            if self._selected_idx >= 0 and self._hit_handle(e.x, e.y):
-                return
-            try:
-                idx = next(i for i, a in enumerate(self._annotations) if a is ann)
-            except StopIteration:
-                return
-            self._selected_idx = idx
-            self._drag_mode    = "move"
-            self._drag_start   = (e.x, e.y)
-            self._drag_orig    = self._get_coords(ann)
-            self._draw_selection(idx)
-            return "break"   # stop propagation to canvas widget binding
-
-        self.cv.tag_bind(item_id, "<ButtonPress-1>", on_press)
+        self._bind_selectable_item(item, self._annotations[-1])
 
     def _cancel_text(self):
         if self._text_entry:
@@ -574,6 +696,8 @@ class AnnotationEditor:
         ann = self._annotations.pop()
         if ann.get("canvas_item"):
             self.cv.delete(ann["canvas_item"])
+        if ann.get("canvas_text"):
+            self.cv.delete(ann["canvas_text"])
         if ann["type"] == "blur":
             self._refresh_base()
 
@@ -617,6 +741,15 @@ class AnnotationEditor:
                 x, y = ann["coords"]
                 font = _load_font(ann["font_size"])
                 draw.text((x, y), ann["text"], fill=ann["color"], font=font)
+
+            elif t == "number":
+                cx, cy = ann["coords"]
+                r = ann.get("radius", 14)
+                draw.ellipse([cx - r, cy - r, cx + r, cy + r],
+                             fill=ann["color"], outline=ann["color"])
+                font = _load_font(max(10, int(r * 1.2)))
+                draw.text((cx, cy), str(ann["number"]),
+                          fill="white", font=font, anchor="mm")
 
         buf = BytesIO()
         img.save(buf, format="JPEG", quality=92)
