@@ -753,18 +753,19 @@ class ITDocuMakerApp:
 
         markdown = self._get_markdown_content()
 
-        # Screenshots vor KI-Anfrage extrahieren und durch Platzhalter ersetzen,
-        # damit die KI keine riesigen Base64-Blöcke erhält und verliert.
-        extracted: dict[str, str] = {}
-        _counter = [0]
+        # Screenshots extrahieren und aus dem KI-Prompt heraushalten.
+        # Die KI bekommt nur den Textinhalt; Bilder werden danach als Anhang angehängt.
+        images: list[tuple[str, str]] = []  # [(alt, data_uri), ...]
 
         def _extract(m):
-            _counter[0] += 1
-            key = f"[SCREENSHOT_{_counter[0]}]"
-            extracted[key] = m.group(0)
-            return key
+            full = m.group(0)
+            alt_end = full.index('](')
+            alt = full[2:alt_end]
+            url = full[alt_end + 2:-1]
+            images.append((alt, url))
+            return ''
 
-        md_for_ai = re.sub(r'!\[[^\]]*\]\(data:image/[^)]+\)', _extract, markdown)
+        md_for_ai = re.sub(r'!\[[^\]]*\]\(data:image/[^)]+\)', _extract, markdown).strip()
 
         def _thread():
             try:
@@ -775,9 +776,8 @@ class ITDocuMakerApp:
                 provider = get_provider(cfg.get_ai_config())
                 description = (
                     "Bitte verbessere und formatiere diese IT-Dokumentation professionell. "
-                    "Behalte alle Kapitelstrukturen (# und ##), Inhalte und Screenshot-Platzhalter "
-                    "([SCREENSHOT_N]) exakt an ihrer Position bei. Antworte NUR mit dem verbesserten "
-                    "Markdown-Dokument, ohne Einleitung oder Erklärung.\n\n"
+                    "Behalte alle Kapitelstrukturen (# und ##) und Inhalte bei. "
+                    "Antworte NUR mit dem verbesserten Markdown-Dokument, ohne Einleitung oder Erklärung.\n\n"
                     + md_for_ai
                 )
                 md_enhanced = provider.generate_document(
@@ -787,9 +787,13 @@ class ITDocuMakerApp:
                     template_id=template_id,
                     chapters=[], aushang=False, refs=[],
                 )
-                # Originale Screenshots wieder einfügen
-                for key, img_tag in extracted.items():
-                    md_enhanced = md_enhanced.replace(key, img_tag)
+                # Screenshots als Anhang nach dem KI-Text anfügen
+                if images:
+                    md_enhanced = md_enhanced.rstrip()
+                    md_enhanced += "\n\n## Anhang: Screenshots\n"
+                    for idx, (alt, url) in enumerate(images, 1):
+                        caption = alt or f"Screenshot {idx}"
+                        md_enhanced += f"\n### Screenshot {idx}\n\n![{caption}]({url})\n"
                 data = events_to_doc_data([], self.doc_title.get(), template_id, fmt, md_enhanced)
                 self.root.after(0, self._stop_progress)
                 self.root.after(0, lambda: self._run_export(data, tpath, fmt))
