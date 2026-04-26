@@ -207,6 +207,13 @@ class AnnotationEditor:
                 "move":  ((s_cv[0] + e_cv[0]) // 2, (s_cv[1] + e_cv[1]) // 2),
             }
         elif t == "text":
+            if ann.get("canvas_item"):
+                try:
+                    bb = self.cv.bbox(ann["canvas_item"])
+                    if bb:
+                        return {"move": ((bb[0] + bb[2]) // 2, (bb[1] + bb[3]) // 2)}
+                except Exception:
+                    pass
             cx, cy = self._to_cv(*ann["coords"])
             return {"move": (cx, cy)}
         return {}
@@ -270,6 +277,14 @@ class AnnotationEditor:
                 if _point_to_segment_dist(cx, cy, acx0, acy0, acx1, acy1) < 10:
                     return i
             elif t == "text":
+                if ann.get("canvas_item"):
+                    try:
+                        bb = self.cv.bbox(ann["canvas_item"])
+                        if bb and bb[0]-4 <= cx <= bb[2]+4 and bb[1]-4 <= cy <= bb[3]+4:
+                            return i
+                        continue
+                    except Exception:
+                        pass
                 tx, ty_img = ann["coords"]
                 tcx, tcy = self._to_cv(tx, ty_img)
                 if abs(cx - tcx) < 80 and abs(cy - tcy) < 24:
