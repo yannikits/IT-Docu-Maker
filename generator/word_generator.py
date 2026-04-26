@@ -153,6 +153,34 @@ def _add_warning_box(doc, text):
     run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
 
 
+def _add_image_placeholder(doc, label: str):
+    """Rendert einen sichtbaren Platzhalter-Rahmen für fehlende Bilder."""
+    p = doc.add_paragraph()
+    pPr = p._p.get_or_add_pPr()
+    pBdr = OxmlElement('w:pBdr')
+    for side in ('top', 'left', 'bottom', 'right'):
+        el = OxmlElement(f'w:{side}')
+        el.set(qn('w:val'), 'single')
+        el.set(qn('w:sz'), '6')
+        el.set(qn('w:space'), '4')
+        el.set(qn('w:color'), 'AAAAAA')
+        pBdr.append(el)
+    pPr.append(pBdr)
+    shd = OxmlElement('w:shd')
+    shd.set(qn('w:val'), 'clear')
+    shd.set(qn('w:color'), 'auto')
+    shd.set(qn('w:fill'), 'F5F5F5')
+    pPr.append(shd)
+    ind = OxmlElement('w:ind')
+    ind.set(qn('w:left'), '180')
+    ind.set(qn('w:right'), '180')
+    pPr.append(ind)
+    run = p.add_run(f'📷  {label}  – Screenshot im Anhang')
+    run.italic = True
+    run.font.size = Pt(10)
+    run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+
+
 def _add_refs_table(doc, refs, style_map):
     table = _add_table_safe(doc, style_map, rows=1, cols=2)
     hdr = table.rows[0].cells
@@ -334,6 +362,9 @@ def _add_markdown_content(doc, markdown, style_map, fallback_color, skip_first_h
             _add_paragraph_with_inline(doc, stripped[2:], style_map, 'bullet')
         elif re.match(r'^\d+\.\s', stripped):
             _add_paragraph_with_inline(doc, re.sub(r'^\d+\.\s', '', stripped), style_map, 'number')
+        elif re.match(r'^\[Bild:\s*.+\]$', stripped):
+            label = re.sub(r'^\[Bild:\s*|\]$', '', stripped)
+            _add_image_placeholder(doc, label)
         else:
             _add_paragraph_with_inline(doc, stripped, style_map)
 

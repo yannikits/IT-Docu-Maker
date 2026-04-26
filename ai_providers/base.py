@@ -57,6 +57,7 @@ Formatierungsregeln:
 - Einzelne Schritte als nummerierte Liste mit präziser Beschreibung
 - Hinweise und Warnungen als > ⚠️ Text
 - Kein Abschnitt "Hinweise zur Vorlage"
+- Keine Bilder, Screenshots oder Bildplatzhalter einfügen – Screenshots werden automatisch als Anhang angehängt
 - Nur Markdown ausgeben, keine Erklärungen davor oder danach
 - Wenn keine ABSCHNITT-Markierungen vorhanden, sinnvolle Kapitel aus dem Ablauf ableiten"""
 

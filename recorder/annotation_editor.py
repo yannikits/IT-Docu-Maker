@@ -65,7 +65,7 @@ class AnnotationEditor:
 
         parent.wait_window(self.win)
 
-    # ── Toolbar ──────────────────────────────────────────────────────────────────
+    # ── Toolbar ────────────────────────────────────────────────────────────────────
 
     def _build_toolbar(self):
         tb = tk.Frame(self.win, bg="#2d2d30", pady=5)
