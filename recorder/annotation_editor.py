@@ -207,15 +207,13 @@ class AnnotationEditor:
                 "move":  ((s_cv[0] + e_cv[0]) // 2, (s_cv[1] + e_cv[1]) // 2),
             }
         elif t == "text":
-            if ann.get("canvas_item"):
-                try:
-                    bb = self.cv.bbox(ann["canvas_item"])
-                    if bb:
-                        return {"move": ((bb[0] + bb[2]) // 2, (bb[1] + bb[3]) // 2)}
-                except Exception:
-                    pass
-            cx, cy = self._to_cv(*ann["coords"])
-            return {"move": (cx, cy)}
+            tx, ty_img = ann["coords"]
+            tcx, tcy = self._to_cv(tx, ty_img)
+            fs_cv = max(11, int(13 * self._s))
+            text = ann.get("text", "")
+            est_w = max(20, int(len(text) * fs_cv * 0.65)) + 8
+            est_h = int(fs_cv * 1.6) + 4
+            return {"move": (tcx + est_w // 2, tcy + est_h // 2)}
         return {}
 
     def _draw_selection(self, idx: int):
@@ -277,21 +275,13 @@ class AnnotationEditor:
                 if _point_to_segment_dist(cx, cy, acx0, acy0, acx1, acy1) < 10:
                     return i
             elif t == "text":
-                if ann.get("canvas_item"):
-                    try:
-                        hits = self.cv.find_overlapping(cx - 8, cy - 8, cx + 8, cy + 8)
-                        if ann["canvas_item"] in hits:
-                            return i
-                        bb = self.cv.bbox(ann["canvas_item"])
-                        if bb is not None:
-                            if bb[0] - 10 <= cx <= bb[2] + 10 and bb[1] - 10 <= cy <= bb[3] + 10:
-                                return i
-                            continue
-                    except Exception:
-                        pass
                 tx, ty_img = ann["coords"]
                 tcx, tcy = self._to_cv(tx, ty_img)
-                if abs(cx - tcx) < 80 and abs(cy - tcy) < 24:
+                fs_cv = max(11, int(13 * self._s))
+                text = ann.get("text", "")
+                est_w = max(20, int(len(text) * fs_cv * 0.65)) + 8
+                est_h = int(fs_cv * 1.6) + 4
+                if tcx - 6 <= cx <= tcx + est_w and tcy - 6 <= cy <= tcy + est_h:
                     return i
         return -1
 
