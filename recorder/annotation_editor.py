@@ -41,8 +41,8 @@ class AnnotationEditor:
 
         # Select-Tool-Zustand
         self._selected_idx = -1
-        self._sel_handles  = []   # [(handle_key, canvas_item_id), ...]
-        self._drag_mode    = ""   # "move" | "nw"|"ne"|"sw"|"se"|"n"|"s"|"w"|"e"|"start"|"end"
+        self._sel_handles  = []
+        self._drag_mode    = ""
         self._drag_start   = (0, 0)
         self._drag_orig    = None
 
@@ -72,12 +72,13 @@ class AnnotationEditor:
 
         self._refresh_base()
 
-        self.cv.bind("<ButtonPress-1>",  self._on_press)
-        self.cv.bind("<B1-Motion>",       self._on_drag)
-        self.cv.bind("<ButtonRelease-1>", self._on_release)
-        self.cv.bind("<Motion>",          self._on_motion)
-        self.win.bind("<Escape>",         lambda _: self._deselect())
-        self.win.bind("<Delete>",         self._delete_selected)
+        self.cv.bind("<ButtonPress-1>",   self._on_press)
+        self.cv.bind("<B1-Motion>",        self._on_drag)
+        self.cv.bind("<ButtonRelease-1>",  self._on_release)
+        self.cv.bind("<Motion>",           self._on_motion)
+        self.cv.bind("<Double-Button-1>",  self._on_dblclick)
+        self.win.bind("<Escape>",          lambda _: self._deselect())
+        self.win.bind("<Delete>",          self._delete_selected)
 
         self.win.update_idletasks()
         x = (sw - self.win.winfo_width())  // 2
@@ -134,7 +135,6 @@ class AnnotationEditor:
                   cursor="hand2", command=self._accept
                   ).pack(side=tk.RIGHT, padx=(0, 4))
 
-        # Nur Button-Highlight setzen – cv existiert hier noch nicht
         self._tool = "rect"
         for tid, btn in self._tbtn.items():
             btn.config(bg="#0078d4" if tid == "rect" else "#3c3c3c")
@@ -210,16 +210,15 @@ class AnnotationEditor:
                 "end":   e_cv,
                 "move":  ((s_cv[0] + e_cv[0]) // 2, (s_cv[1] + e_cv[1]) // 2),
             }
-        elif t in ("text", "number"):
+        elif t == "text":
             cx, cy = self._to_cv(*ann["coords"])
-            if t == "text":
-                fs_cv = max(11, int(13 * self._s))
-                est_w = max(20, int(len(ann.get("text", "")) * fs_cv * 0.65)) + 8
-                est_h = int(fs_cv * 1.6) + 4
-                return {"move": (cx + est_w // 2, cy + est_h // 2)}
-            else:  # number
-                r = max(14, int(ann.get("radius", 14) * self._s))
-                return {"move": (cx, cy)}
+            fs_cv = max(11, int(13 * self._s))
+            est_w = max(20, int(len(ann.get("text", "")) * fs_cv * 0.65)) + 8
+            est_h = int(fs_cv * 1.6) + 4
+            return {"move": (cx + est_w // 2, cy + est_h // 2)}
+        elif t == "number":
+            cx, cy = self._to_cv(*ann["coords"])
+            return {"move": (cx, cy)}
         return {}
 
     def _draw_selection(self, idx: int):
@@ -284,8 +283,7 @@ class AnnotationEditor:
                 tx, ty_img = ann["coords"]
                 tcx, tcy = self._to_cv(tx, ty_img)
                 fs_cv = max(11, int(13 * self._s))
-                text = ann.get("text", "")
-                est_w = max(20, int(len(text) * fs_cv * 0.65)) + 8
+                est_w = max(20, int(len(ann.get("text", "")) * fs_cv * 0.65)) + 8
                 est_h = int(fs_cv * 1.6) + 4
                 if tcx - 6 <= cx <= tcx + est_w and tcy - 6 <= cy <= tcy + est_h:
                     return i
@@ -394,6 +392,15 @@ class AnnotationEditor:
                 "canvas_item": self._cur_item,
             })
         self._cur_item = None
+
+    def _on_dblclick(self, e):
+        """Canvas-level double-click: öffnet Inline-Edit für Text/Nummer."""
+        if self._tool != "select" or self._selected_idx < 0:
+            return
+        ann = self._annotations[self._selected_idx]
+        if ann["type"] in ("text", "number"):
+            self._drag_mode = ""
+            self._start_edit(ann)
 
     # ── Select-Drag-Logik ─────────────────────────────────────────────────────
 
@@ -629,17 +636,7 @@ class AnnotationEditor:
             self._draw_selection(idx)
             return "break"
 
-        def on_dblclick(e):
-            if self._tool != "select":
-                return
-            if ann["type"] not in ("text", "number"):
-                return
-            self._drag_mode = ""
-            self._start_edit(ann)
-            return "break"
-
-        self.cv.tag_bind(item_id, "<ButtonPress-1>",   on_press)
-        self.cv.tag_bind(item_id, "<Double-Button-1>", on_dblclick)
+        self.cv.tag_bind(item_id, "<ButtonPress-1>", on_press)
 
     # ── Text-Tool ─────────────────────────────────────────────────────────────
 
