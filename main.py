@@ -744,6 +744,19 @@ class ITDocuMakerApp:
 
         markdown = self._get_markdown_content()
 
+        # Screenshots vor KI-Anfrage extrahieren und durch Platzhalter ersetzen,
+        # damit die KI keine riesigen Base64-Blöcke erhält und verliert.
+        extracted: dict[str, str] = {}
+        _counter = [0]
+
+        def _extract(m):
+            _counter[0] += 1
+            key = f"[SCREENSHOT_{_counter[0]}]"
+            extracted[key] = m.group(0)
+            return key
+
+        md_for_ai = re.sub(r'!\[[^\]]*\]\(data:image/[^)]+\)', _extract, markdown)
+
         def _thread():
             try:
                 import config as cfg
@@ -753,10 +766,10 @@ class ITDocuMakerApp:
                 provider = get_provider(cfg.get_ai_config())
                 description = (
                     "Bitte verbessere und formatiere diese IT-Dokumentation professionell. "
-                    "Behalte alle Kapitelstrukturen (# und ##), Inhalte und Screenshot-Verweise "
-                    "(![...](data:image/...)) exakt bei. Antworte NUR mit dem verbesserten "
+                    "Behalte alle Kapitelstrukturen (# und ##), Inhalte und Screenshot-Platzhalter "
+                    "([SCREENSHOT_N]) exakt an ihrer Position bei. Antworte NUR mit dem verbesserten "
                     "Markdown-Dokument, ohne Einleitung oder Erklärung.\n\n"
-                    + markdown
+                    + md_for_ai
                 )
                 md_enhanced = provider.generate_document(
                     description=description,
@@ -765,6 +778,9 @@ class ITDocuMakerApp:
                     template_id=template_id,
                     chapters=[], aushang=False, refs=[],
                 )
+                # Originale Screenshots wieder einfügen
+                for key, img_tag in extracted.items():
+                    md_enhanced = md_enhanced.replace(key, img_tag)
                 data = events_to_doc_data([], self.doc_title.get(), template_id, fmt, md_enhanced)
                 self.root.after(0, self._stop_progress)
                 self.root.after(0, lambda: self._run_export(data, tpath, fmt))
