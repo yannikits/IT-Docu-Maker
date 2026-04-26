@@ -26,13 +26,14 @@ from pathlib import Path
 from io import BytesIO
 import base64
 import queue
+import importlib.util
 
 # ---------------------------------------------------------------------------
 # Dependency check
 # ---------------------------------------------------------------------------
 REQUIRED = {"mss": "mss", "PIL": "Pillow", "pynput": "pynput"}
 missing = [pkg for mod, pkg in REQUIRED.items()
-           if not __import__("importlib").util.find_spec(mod)]
+                      if not importlib.util.find_spec(mod)]
 if missing:
     print(f"Installiere: {', '.join(missing)}")
     import subprocess
