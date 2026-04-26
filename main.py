@@ -123,7 +123,6 @@ class ITDocuMakerApp:
     def _build_ui(self):
         self.root.configure(bg="#f3f2f1")
 
-        # ── Titelleiste ──────────────────────────────────────────────────────
         hdr = tk.Frame(self.root, bg="#0078d4", pady=10)
         hdr.pack(fill=tk.X)
         tk.Label(hdr, text="IT-Docu-Maker",
@@ -133,7 +132,6 @@ class ITDocuMakerApp:
                  bg="#0078d4", fg="#c7e0f4",
                  font=("Segoe UI", 10)).pack(side=tk.LEFT)
 
-        # ── Statuszeile ──────────────────────────────────────────────────────
         self.status_var = tk.StringVar(
             value="Bereit – Aufnahme starten, Inhalt erfassen, dann exportieren."
         )
@@ -143,7 +141,6 @@ class ITDocuMakerApp:
         )
         self.status_label.pack(fill=tk.X, padx=12, pady=(6, 2))
 
-        # ── Aufnahme-Steuerung ───────────────────────────────────────────────
         self.rec_btn = tk.Button(
             self.root,
             text="▶  Aufnahme starten (F8)",
@@ -160,7 +157,6 @@ class ITDocuMakerApp:
             bg="#f3f2f1", fg="#605e5c", font=("Segoe UI", 9)
         ).pack(anchor="w", padx=12)
 
-        # ── Dokumentstruktur & Inhalt ────────────────────────────────────────
         step_lf = ttk.LabelFrame(self.root, text="Dokumentstruktur & Inhalt", padding=(10, 6))
         step_lf.pack(fill=tk.BOTH, expand=True, padx=12, pady=6)
 
@@ -271,7 +267,7 @@ class ITDocuMakerApp:
         self.preview_canvas.bind("<Button-1>", self._on_preview_click)
         self._preview_b64: str = ""
 
-        # ── Einstellungen ────────────────────────────────────────────────────
+        # – Einstellungen –
         cfg_lf = ttk.LabelFrame(self.root, text="Einstellungen", padding=(10, 4))
         cfg_lf.pack(fill=tk.X, padx=12, pady=4)
 
@@ -299,7 +295,6 @@ class ITDocuMakerApp:
             lambda *_: self.qlbl.config(text=f"{self.screenshot_quality.get()}%")
         )
 
-        # ── Export ───────────────────────────────────────────────────────────
         ttk.Separator(self.root, orient="horizontal").pack(fill=tk.X, padx=12, pady=6)
 
         exp_lf = ttk.LabelFrame(self.root, text="Dokument exportieren", padding=(10, 6))
@@ -394,7 +389,7 @@ class ITDocuMakerApp:
             pass
 
     # -----------------------------------------------------------------------
-    # Hotkeys (pynput)
+    # Hotkeys
     # -----------------------------------------------------------------------
 
     def _setup_hotkeys(self):
@@ -492,7 +487,7 @@ class ITDocuMakerApp:
             pass
 
     # -----------------------------------------------------------------------
-    # Auto-Tracking (sekundär)
+    # Auto-Tracking
     # -----------------------------------------------------------------------
 
     def _on_tracked_event(self, action_type, description, x, y):
@@ -570,12 +565,6 @@ class ITDocuMakerApp:
         except Exception:
             return ""
 
-    def _clear_note(self):
-        self.note_text.config(state=tk.NORMAL)
-        self.note_text.delete("1.0", tk.END)
-
-    # – F9: Bereichs-Screenshot –
-
     def take_area_screenshot(self):
         if not self.recording or self._snipping_active:
             return
@@ -597,6 +586,13 @@ class ITDocuMakerApp:
             self._set_status("Screenshot abgebrochen.", "#605e5c")
             return
 
+        from recorder.annotation_editor import AnnotationEditor
+        editor = AnnotationEditor(self.root, b64)
+        if editor.result_b64 is None:
+            self._set_status("Screenshot verworfen.", "#605e5c")
+            return
+        b64 = editor.result_b64
+
         self._screenshot_count += 1
         n = self._screenshot_count
         ss_dir = os.path.join(self._session_dir, "screenshots")
@@ -605,7 +601,6 @@ class ITDocuMakerApp:
         img_filename = f"screenshot_{n:03d}.png"
         img_path = os.path.join(ss_dir, img_filename)
 
-        # ── FIX: über PIL als echtes PNG speichern (snipping gibt JPEG zurück) ──
         pil_img = Image.open(BytesIO(base64.b64decode(b64)))
         pil_img.save(img_path, format="PNG")
 
@@ -629,8 +624,6 @@ class ITDocuMakerApp:
         self._set_status(f"\U0001f4f7 Screenshot {n} gespeichert: {img_filename}", "#004578")
         self._update_counter()
 
-    # – F10: Markdown speichern –
-
     def save_step_text_only(self):
         if not self.recording:
             return
@@ -653,7 +646,6 @@ class ITDocuMakerApp:
             pass
 
     def _get_markdown_content(self) -> str:
-        """Text-Feldinhalt mit Datei-Referenzen als base64 data-URIs aufgelöst."""
         content = self.note_text.get("1.0", tk.END).strip()
         if not self._session_dir:
             return content
@@ -667,7 +659,6 @@ class ITDocuMakerApp:
             try:
                 with open(full_path, 'rb') as f:
                     img_bytes = f.read()
-                # Echten MIME-Typ anhand Magic Bytes erkennen
                 mime = "image/jpeg" if img_bytes[:2] == b'\xff\xd8' else "image/png"
                 b64_str = base64.b64encode(img_bytes).decode('ascii')
                 return f"![{alt}](data:{mime};base64,{b64_str})"
@@ -696,7 +687,7 @@ class ITDocuMakerApp:
         self.status_label.config(fg=color)
 
     # -----------------------------------------------------------------------
-    # Fortschrittsbalken (KI-Export)
+    # Fortschrittsbalken
     # -----------------------------------------------------------------------
 
     def _start_progress(self):
