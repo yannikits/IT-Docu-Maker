@@ -38,13 +38,12 @@ class AnnotationEditor:
         self._text_pos    = (0, 0)
 
         # Select-Tool-Zustand
-        self._selected_idx    = -1
-        self._sel_handles     = []   # [(handle_key, canvas_item_id), ...]
-        self._drag_mode       = ""   # "move" | "nw"|"ne"|"sw"|"se"|"n"|"s"|"w"|"e"|"start"|"end"
-        self._drag_start      = (0, 0)
-        self._drag_orig       = None # Kopie der Coords beim Drag-Start
+        self._selected_idx = -1
+        self._sel_handles  = []   # [(handle_key, canvas_item_id), ...]
+        self._drag_mode    = ""   # "move" | "nw"|"ne"|"sw"|"se"|"n"|"s"|"w"|"e"|"start"|"end"
+        self._drag_start   = (0, 0)
+        self._drag_orig    = None
 
-        # Bild laden
         raw = base64.b64decode(b64_image)
         self.orig_img = Image.open(BytesIO(raw)).convert("RGB")
         self.img_w, self.img_h = self.orig_img.size
@@ -71,11 +70,11 @@ class AnnotationEditor:
 
         self._refresh_base()
 
-        self.cv.bind("<ButtonPress-1>",   self._on_press)
-        self.cv.bind("<B1-Motion>",        self._on_drag)
-        self.cv.bind("<ButtonRelease-1>",  self._on_release)
-        self.cv.bind("<Motion>",           self._on_motion)
-        self.win.bind("<Escape>",          lambda _: self._deselect())
+        self.cv.bind("<ButtonPress-1>",  self._on_press)
+        self.cv.bind("<B1-Motion>",       self._on_drag)
+        self.cv.bind("<ButtonRelease-1>", self._on_release)
+        self.cv.bind("<Motion>",          self._on_motion)
+        self.win.bind("<Escape>",         lambda _: self._deselect())
 
         self.win.update_idletasks()
         x = (sw - self.win.winfo_width())  // 2
@@ -131,12 +130,17 @@ class AnnotationEditor:
                   cursor="hand2", command=self._accept
                   ).pack(side=tk.RIGHT, padx=(0, 4))
 
-        self._select_tool("rect")
+        # Nur Button-Highlight setzen – cv existiert hier noch nicht
+        self._tool = "rect"
+        for tid, btn in self._tbtn.items():
+            btn.config(bg="#0078d4" if tid == "rect" else "#3c3c3c")
 
     def _select_tool(self, tool: str):
         self._tool = tool
         for tid, btn in self._tbtn.items():
             btn.config(bg="#0078d4" if tid == tool else "#3c3c3c")
+        if not hasattr(self, "cv"):
+            return
         if tool == "select":
             self.cv.config(cursor="arrow")
         else:
@@ -172,23 +176,16 @@ class AnnotationEditor:
         self.cv.delete("base")
         self.cv.create_image(0, 0, anchor="nw", image=self._base_ph, tags="base")
         self.cv.tag_lower("base")
-        # Blur-Outline-Items neu zeichnen
         for ann in self._annotations:
             if ann["type"] == "blur":
                 self._redraw_annotation_item(ann)
 
-    # ── Griffpunkte (Select-Tool) ─────────────────────────────────────────────
+    # ── Griffpunkte ───────────────────────────────────────────────────────────
 
     def _get_handle_positions(self, ann: dict) -> dict[str, tuple[int, int]]:
         t = ann["type"]
-        if t == "rect":
-            x0, y0, x1, y1 = ann["coords"]
-        elif t == "blur":
-            x0, y0, x1, y1 = ann["region"]
-        else:
-            x0 = y0 = x1 = y1 = 0
-
         if t in ("rect", "blur"):
+            x0, y0, x1, y1 = ann["coords"] if t == "rect" else ann["region"]
             cx0, cy0 = self._to_cv(x0, y0)
             cx1, cy1 = self._to_cv(x1, y1)
             lx, rx = min(cx0, cx1), max(cx0, cx1)
@@ -218,7 +215,7 @@ class AnnotationEditor:
         self._clear_selection_handles()
         if idx < 0 or idx >= len(self._annotations):
             return
-        ann = self._annotations[idx]
+        ann     = self._annotations[idx]
         handles = self._get_handle_positions(ann)
         r = _HANDLE_R
         for key, (cx, cy) in handles.items():
@@ -244,7 +241,6 @@ class AnnotationEditor:
     # ── Hit-Test ──────────────────────────────────────────────────────────────
 
     def _hit_handle(self, cx: int, cy: int) -> str:
-        """Gibt Handle-Key zurück wenn Klick auf Griffpunkt, sonst ''."""
         r = _HANDLE_R + 2
         for key, item in self._sel_handles:
             coords = self.cv.coords(item)
@@ -256,10 +252,9 @@ class AnnotationEditor:
         return ""
 
     def _hit_annotation(self, cx: int, cy: int) -> int:
-        """Gibt Index der obersten Annotation zurück, oder -1."""
         for i in range(len(self._annotations) - 1, -1, -1):
             ann = self._annotations[i]
-            t = ann["type"]
+            t   = ann["type"]
             if t in ("rect", "blur"):
                 x0, y0, x1, y1 = ann["coords"] if t == "rect" else ann["region"]
                 cvx0, cvy0 = self._to_cv(x0, y0)
@@ -281,7 +276,7 @@ class AnnotationEditor:
                     return i
         return -1
 
-    # ── Cursor-Anpassung im Select-Modus ─────────────────────────────────────
+    # ── Cursor im Select-Modus ────────────────────────────────────────────────
 
     _RESIZE_CURSORS = {
         "nw": "size_nw_se", "se": "size_nw_se",
@@ -374,10 +369,9 @@ class AnnotationEditor:
             })
         self._cur_item = None
 
-    # ── Select-Tool: Drag-Logik ───────────────────────────────────────────────
+    # ── Select-Drag-Logik ─────────────────────────────────────────────────────
 
     def _sel_press(self, cx: int, cy: int):
-        # Zuerst Griffpunkt prüfen (nur wenn schon selektiert)
         if self._selected_idx >= 0:
             handle = self._hit_handle(cx, cy)
             if handle:
@@ -385,8 +379,6 @@ class AnnotationEditor:
                 self._drag_start = (cx, cy)
                 self._drag_orig  = self._get_coords(self._annotations[self._selected_idx])
                 return
-
-        # Dann Annotation treffen
         idx = self._hit_annotation(cx, cy)
         if idx >= 0:
             self._selected_idx = idx
@@ -409,11 +401,11 @@ class AnnotationEditor:
         self._draw_selection(self._selected_idx)
 
     def _sel_release(self):
-        # Blur-Regionen nach Verschieben neu rendern
         if self._selected_idx >= 0:
             ann = self._annotations[self._selected_idx]
             if ann["type"] == "blur":
                 self._refresh_base()
+                self._draw_selection(self._selected_idx)
         self._drag_mode = ""
         self._drag_orig = None
 
@@ -432,39 +424,27 @@ class AnnotationEditor:
         orig = self._drag_orig
         t    = ann["type"]
 
-        if t in ("rect", "arrow"):
-            key = "coords"
-        elif t == "blur":
-            key = "region"
-        elif t == "text":
-            if mode in ("move",):
+        if t == "text":
+            if mode == "move":
                 ox, oy = orig
                 ann["coords"] = (int(ox + ddx), int(oy + ddy))
             return
-        else:
-            return
 
+        key = "coords" if t in ("rect", "arrow") else "region"
         x0, y0, x1, y1 = orig
         dx, dy = int(ddx), int(ddy)
 
-        if mode == "move":
-            ann[key] = (x0 + dx, y0 + dy, x1 + dx, y1 + dy)
-        elif mode in ("nw", "start"):
-            ann[key] = (x0 + dx, y0 + dy, x1, y1)
-        elif mode == "ne":
-            ann[key] = (x0, y0 + dy, x1 + dx, y1)
-        elif mode == "sw":
-            ann[key] = (x0 + dx, y0, x1, y1 + dy)
-        elif mode in ("se", "end"):
-            ann[key] = (x0, y0, x1 + dx, y1 + dy)
-        elif mode == "n":
-            ann[key] = (x0, y0 + dy, x1, y1)
-        elif mode == "s":
-            ann[key] = (x0, y0, x1, y1 + dy)
-        elif mode == "w":
-            ann[key] = (x0 + dx, y0, x1, y1)
-        elif mode == "e":
-            ann[key] = (x0, y0, x1 + dx, y1)
+        if   mode == "move":  ann[key] = (x0+dx, y0+dy, x1+dx, y1+dy)
+        elif mode == "nw":    ann[key] = (x0+dx, y0+dy, x1,    y1   )
+        elif mode == "ne":    ann[key] = (x0,    y0+dy, x1+dx, y1   )
+        elif mode == "sw":    ann[key] = (x0+dx, y0,    x1,    y1+dy)
+        elif mode == "se":    ann[key] = (x0,    y0,    x1+dx, y1+dy)
+        elif mode == "n":     ann[key] = (x0,    y0+dy, x1,    y1   )
+        elif mode == "s":     ann[key] = (x0,    y0,    x1,    y1+dy)
+        elif mode == "w":     ann[key] = (x0+dx, y0,    x1,    y1   )
+        elif mode == "e":     ann[key] = (x0,    y0,    x1+dx, y1   )
+        elif mode == "start": ann[key] = (x0+dx, y0+dy, x1,    y1   )
+        elif mode == "end":   ann[key] = (x0,    y0,    x1+dx, y1+dy)
 
     def _redraw_annotation_item(self, ann: dict):
         if ann.get("canvas_item"):
@@ -492,7 +472,6 @@ class AnnotationEditor:
                 cx, cy, text=ann["text"], fill=ann["color"],
                 font=("Segoe UI", fs_cv, "bold"), anchor="nw")
         elif t == "blur":
-            # Blur-Bereich als gestrichelte Outline anzeigen
             x0, y0, x1, y1 = ann["region"]
             cx0, cy0 = self._to_cv(x0, y0)
             cx1, cy1 = self._to_cv(x1, y1)
