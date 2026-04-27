@@ -212,6 +212,7 @@ def __init__(self, root: tk.Tk):
     # 4. Hotkeys F8/F9/F10 registrieren (pynput GlobalHotKeys)
     # 5. Queue für KI-Thread-Kommunikation erstellen
     # 6. Vorlagen registrieren (TEMPLATE_FILES-Dict)
+    self._auto_screenshot_dir: str = ""  # optionaler Auto-Speicherordner
 ```
 
 **Template-Registrierung:**
@@ -227,6 +228,25 @@ TEMPLATE_FILES = {
     "praesentation": ("Präsentationsvorlage_Vorlage.pptx", ..., "ppt"),
 }
 ```
+
+**Screenshot-Auto-Speicherung:**
+
+```python
+def _choose_auto_screenshot_dir(self):
+    # Öffnet einmalig einen Ordner-Auswahldialog
+    # Speichert den Pfad in self._auto_screenshot_dir
+    # Aktualisiert das Label in der UI (grün bei gesetztem Ordner)
+
+def _do_snip(self, orig_geo):
+    # ...nach Session-Speicherung in sessions/{title}/screenshots/:
+    if self._auto_screenshot_dir:
+        ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+        auto_filename = f"{safe_title}_{ts}.png"
+        pil_img.save(os.path.join(self._auto_screenshot_dir, auto_filename))
+        # Statusleiste: "Screenshot N gespeichert: X  ·  Auto: Y"
+```
+
+Der Ordnerpfad wird nur für die laufende Sitzung im Speicher gehalten (nicht in `config.ini` persistiert).
 
 **KI-Export (asynchron):**
 

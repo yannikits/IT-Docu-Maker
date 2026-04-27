@@ -11,11 +11,12 @@
 7. [Screenshots aufnehmen und bearbeiten](#screenshots-aufnehmen-und-bearbeiten)
 8. [Annotationswerkzeuge](#annotationswerkzeuge)
 9. [Auswahl-Werkzeug (Bearbeiten, Verschieben, Löschen)](#auswahl-werkzeug)
-10. [Dokument exportieren](#dokument-exportieren)
-11. [Vorlage auswählen](#vorlage-auswählen)
-12. [KI-Konfiguration (optional)](#ki-konfiguration-optional)
-13. [Tastenkürzel im Überblick](#tastenkürzel-im-überblick)
-14. [Häufige Fragen (FAQ)](#häufige-fragen-faq)
+10. [Screenshot-Ordner (Auto-Speicherung)](#screenshot-ordner-auto-speicherung)
+11. [Dokument exportieren](#dokument-exportieren)
+12. [Vorlage auswählen](#vorlage-auswählen)
+13. [KI-Konfiguration (optional)](#ki-konfiguration-optional)
+14. [Tastenkürzel im Überblick](#tastenkürzel-im-überblick)
+15. [Häufige Fragen (FAQ)](#häufige-fragen-faq)
 
 ---
 
@@ -128,6 +129,10 @@ Die eingegebenen Beschriftungen erscheinen als Überschriften im generierten Dok
 
 Der Editor zeigt das aufgenommene Bild. Sie können es nun mit den Werkzeugen in der linken Werkzeugleiste kommentieren und anschließend mit **Übernehmen** speichern oder mit **Abbrechen** verwerfen.
 
+Beim Klick auf **Übernehmen** wird der Screenshot automatisch gespeichert:
+- immer im Session-Ordner (`sessions/{Titel}_{Datum}/screenshots/`)
+- zusätzlich im konfigurierten **Screenshot-Ordner**, sofern einer gewählt wurde (siehe [Screenshot-Ordner](#screenshot-ordner-auto-speicherung))
+
 ---
 
 ## Annotationswerkzeuge
@@ -207,6 +212,31 @@ Doppelklicken Sie auf eine Text- oder Nummerierungs-Annotation, um den Inhalt in
 
 1. Annotation mit dem Auswahl-Werkzeug auswählen.
 2. Taste `Entf` (Delete) drücken.
+
+---
+
+## Screenshot-Ordner (Auto-Speicherung)
+
+Unterhalb der Schaltflächen **Screenshot** und **Speichern** befindet sich eine Zeile zur Konfiguration des automatischen Speicherordners.
+
+### Ordner einrichten
+
+1. Schaltfläche **Ordner wählen** klicken.
+2. Im Dateidialog den gewünschten Zielordner auswählen (z. B. Desktop oder ein Projektordner).
+3. Der gewählte Ordnername erscheint grün in der Anzeige.
+
+### Verhalten nach Einrichtung
+
+Sobald ein Ordner gewählt ist, wird jeder annotierte Screenshot beim Klick auf **Übernehmen** automatisch dorthin gespeichert:
+
+- **Dateiname:** `{Dokumenttitel}_{YYYY-MM-DD_HHMMSS}.png`
+- **Statusleiste:** zeigt beide Speicherorte an (Session-intern + Auto-Speicherung)
+
+### Ordner zurücksetzen
+
+Klicken Sie erneut auf **Ordner wählen** und brechen Sie den Dialog ab – die Auto-Speicherung wird damit deaktiviert.
+
+> **Hinweis:** Der gewählte Ordner wird nicht dauerhaft gespeichert und muss nach jedem Programmstart neu gewählt werden.
 
 ---
 
@@ -334,3 +364,6 @@ Blur-Bereiche sind permanent. Nutzen Sie **Abbrechen** im Editor, um den Screens
 
 **Nummerierung beginnt nicht bei 1.**
 Die Nummerierung setzt automatisch bei der nächsten freien Zahl an. Um von vorne zu beginnen, löschen Sie alle vorhandenen Nummernkreise mit dem Auswahl-Werkzeug + `Entf`.
+
+**Der Screenshot-Ordner muss nach jedem Start neu gewählt werden.**
+Der Ordnerpfad wird nicht dauerhaft gespeichert. Wählen Sie ihn zu Beginn jeder Sitzung über **Ordner wählen** erneut aus.
