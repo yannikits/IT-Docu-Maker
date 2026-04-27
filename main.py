@@ -111,6 +111,7 @@ class ITDocuMakerApp:
         self.capture_on_scroll  = tk.BooleanVar(value=False)
         self.screenshot_quality = tk.IntVar(value=85)
         self.subsection_var     = tk.StringVar()
+        self._auto_screenshot_dir: str = ""
 
         self._build_ui()
         self._setup_hotkeys()
@@ -252,6 +253,25 @@ class ITDocuMakerApp:
             relief=tk.FLAT, padx=10, pady=5, cursor="hand2",
         )
         self.save_btn.pack(side=tk.LEFT, fill=tk.X, expand=True)
+
+        # – Auto-Speicherpfad für Screenshots –
+        auto_row = tk.Frame(step_lf)
+        auto_row.pack(fill=tk.X, pady=(4, 0))
+        self.auto_dir_label = tk.Label(
+            auto_row,
+            text="📁  Screenshot-Ordner: (keiner gewählt)",
+            font=("Segoe UI", 8), fg="#605e5c", anchor="w",
+        )
+        self.auto_dir_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.auto_dir_btn = tk.Button(
+            auto_row,
+            text="Ordner wählen",
+            command=self._choose_auto_screenshot_dir,
+            bg="#f3f2f1", fg="#323130",
+            font=("Segoe UI", 8),
+            relief=tk.FLAT, padx=6, pady=2, cursor="hand2",
+        )
+        self.auto_dir_btn.pack(side=tk.RIGHT)
 
         # – Screenshot-Vorschau –
         self.preview_canvas = tk.Canvas(
@@ -565,6 +585,25 @@ class ITDocuMakerApp:
         except Exception:
             return ""
 
+    def _choose_auto_screenshot_dir(self):
+        folder = filedialog.askdirectory(
+            title="Ordner für automatische Screenshot-Speicherung wählen",
+            initialdir=self._auto_screenshot_dir or os.path.expanduser("~"),
+        )
+        if folder:
+            self._auto_screenshot_dir = folder
+            short = Path(folder).name
+            self.auto_dir_label.config(
+                text=f"📁  Screenshot-Ordner: {short}",
+                fg="#107c10",
+            )
+        else:
+            self._auto_screenshot_dir = ""
+            self.auto_dir_label.config(
+                text="📁  Screenshot-Ordner: (keiner gewählt)",
+                fg="#605e5c",
+            )
+
     def take_area_screenshot(self):
         if not self.recording or self._snipping_active:
             return
@@ -604,6 +643,19 @@ class ITDocuMakerApp:
         pil_img = Image.open(BytesIO(base64.b64decode(b64)))
         pil_img.save(img_path, format="PNG")
 
+        # Auto-Speicherung in benutzerdefinierten Ordner
+        auto_saved_path = ""
+        if self._auto_screenshot_dir:
+            ts = datetime.now().strftime("%Y-%m-%d_%H%M%S")
+            safe_title = self._safe_title()[:30]
+            auto_filename = f"{safe_title}_{ts}.png"
+            auto_path = os.path.join(self._auto_screenshot_dir, auto_filename)
+            try:
+                pil_img.save(auto_path, format="PNG")
+                auto_saved_path = auto_path
+            except Exception as exc:
+                self._set_status(f"Auto-Speicherung fehlgeschlagen: {exc}", "#a4262c")
+
         try:
             cursor_line = int(self.note_text.index(tk.INSERT).split('.')[0])
             start = f"{max(1, cursor_line - 3)}.0"
@@ -621,7 +673,13 @@ class ITDocuMakerApp:
         self.note_text.config(bg="#e8f5e9")
         self.root.after(800, lambda: self.note_text.config(bg="#fafafa"))
         self._autosave_md()
-        self._set_status(f"\U0001f4f7 Screenshot {n} gespeichert: {img_filename}", "#004578")
+        if auto_saved_path:
+            self._set_status(
+                f"\U0001f4f7 Screenshot {n} gespeichert: {img_filename}  ·  Auto: {Path(auto_saved_path).name}",
+                "#004578",
+            )
+        else:
+            self._set_status(f"\U0001f4f7 Screenshot {n} gespeichert: {img_filename}", "#004578")
         self._update_counter()
 
     def save_step_text_only(self):
